@@ -1,0 +1,9 @@
+node_modules/
+artifacts/
+release-assets/
+*.log
+*.zip
+tieba-proxy.exe
+.env
+.env.*
+!.env.example

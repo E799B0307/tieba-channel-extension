@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "贴吧频道聊天室（精简版）",
+  "version": "0.2.4",
+  "version_name": "0.2.4-local",
+  "minimum_chrome_version": "116",
+  "description": "在贴吧网页打开侧边栏，使用当前登录账号查看吧频道和发送文字消息（BLCP 真实协议）。无机器人功能。",
+  "permissions": ["sidePanel", "storage", "cookies"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "打开贴吧频道聊天室" },
+  "side_panel": { "default_path": "panel.html" },
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "host_permissions": [
+    "https://tieba.baidu.com/*",
+    "https://tiebac.baidu.com/*",
+    "https://pim.baidu.com/*",
+    "https://himg.bdimg.com/*",
+    "https://tiebapic.baidu.com/*",
+    "https://imgsrc.baidu.com/*",
+    "https://imgsa.baidu.com/*",
+    "https://tieba-ares.cdn.bcebos.com/*",
+    "https://tieba-im-middleend.cdn.bcebos.com/*",
+    "https://*.bcebos.com/*",
+    "https://tb2.bdstatic.com/*",
+    "ws://127.0.0.1:8765/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://tieba.baidu.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; img-src 'self' blob:; connect-src https://tieba.baidu.com https://tiebac.baidu.com https://pim.baidu.com https://himg.bdimg.com https://tiebapic.baidu.com https://imgsrc.baidu.com https://imgsa.baidu.com https://*.bcebos.com https://tb2.bdstatic.com ws://127.0.0.1:8765"
+  }
+}
