@@ -61,6 +61,8 @@ async function dispatch(message) {
       return client.enter(message.room, message.fid, message.accountId);
     case "messages":
       return client.messages(message.room, message.accountId, message.after);
+    case "send-diagnostics":
+      return client.sendDiagnostics(message.room, message.accountId);
     case "favorite-stickers":
       return client.favoriteStickers(message.accountId, message.refresh === true);
     case "send":

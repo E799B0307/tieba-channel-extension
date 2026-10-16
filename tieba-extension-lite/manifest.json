@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "贴吧频道聊天室（精简版）",
-  "version": "0.2.6",
-  "version_name": "0.2.6-local",
+  "version": "0.2.7",
+  "version_name": "0.2.7-local",
   "minimum_chrome_version": "116",
   "description": "在贴吧网页打开侧边栏，使用当前登录账号查看吧频道和发送文字消息（BLCP 真实协议）。无机器人功能。",
   "permissions": ["sidePanel", "storage", "cookies"],

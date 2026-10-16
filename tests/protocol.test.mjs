@@ -5,6 +5,7 @@ const root = new URL('../tieba-extension-lite/', import.meta.url);
 const { parseMessage, parseReactions, parseReactionUsers, parseFavoriteStickers, imageUpload, parseJSON, isDisplayableMessage, canRecallMessage, userIdFromAuthorId, authorIdFromUserId } = await import(new URL('protocol.js', root));
 const { TiebaClient } = await import(new URL('tieba.js', root));
 const { BLCPClient } = await import(new URL('blcp.js', root));
+const { summarizeReply } = await import(new URL('send-diagnostics.js', root));
 const { concatBytes, encodeBytesField, encodeVarintField, parseFields, findField } = await import(new URL('protobuf.js', root));
 const { reactionChoices } = await import(new URL('reactions.js', root));
 const image = reactionChoices[0].image;
@@ -325,6 +326,8 @@ test('BLCP acknowledgements and notifications preserve unquoted 64-bit message I
     blcp._handleFrame(concatBytes(response, data), response.length);
   };
   assert.equal(await blcp.sendMethod185({ method: 185 }), own);
+  assert.equal(blcp.diagnostics.at(-1).methodId, 185);
+  assert.equal(blcp.diagnostics.at(-1).body.response_params.values.msgid, own);
   let packet;
   blcp.onMessage((value) => { packet = value; });
   const notification = encodeBytesField(8, encodeVarintField(1, 3));
@@ -389,6 +392,77 @@ test('send acknowledgements reject server errors and unsafe IDs without retrying
   await assert.rejects(blcp.sendMethod185({}), /确认/);
   response = { meta: { errorCode: 0 }, lcm: { kind: 'json', data: { err_code: '0', msgid: 123 } } };
   assert.equal(await blcp.sendMethod185({}), '123');
+});
+
+test('send diagnostics retain numeric business status without credentials or server text', () => {
+  const secret = 'private-message-and-token';
+  const response = { meta: { errorCode: 0, errorText: secret }, lcm: { kind: 'json', data: {
+    err_code: 0, auto_risk_control_status: 2, tips_new: { code: 5, text: secret },
+    token: secret, bd_uid: '1234567891234567', content: secret,
+    response_params: { msgid: own, time: '1792152000000', role: 7, cookie: secret, name: secret },
+  } } };
+  const summary = summarizeReply(3, 185, response);
+  assert.equal(summary.rpcErrorCode, 0);
+  assert.equal(summary.rpcErrorTextPresent, true);
+  assert.equal(summary.rpcErrorTextIsSuccess, false);
+  assert.equal(summary.body.values.auto_risk_control_status, 2);
+  assert.equal(summary.body.response_params.values.msgid, own);
+  assert.equal(summary.body.tips_new.values.code, 5);
+  assert.equal(summary.body.fields.content, 'string');
+  assert.ok(!JSON.stringify(summary).includes(secret));
+  assert.ok(!JSON.stringify(summary).includes('1234567891234567'));
+  response.lcm.data.err_code = secret;
+  assert.equal(summarizeReply(3, 185, response).body.values.err_code, undefined);
+  assert.equal(summarizeReply(3, 185, null).outcome, 'timeout');
+});
+
+test('BLCP diagnostics are bounded and exclude heartbeats and unrelated responses', async () => {
+  const blcp = new BLCPClient({ bduss: 'test-token', cuidGalaxy2: 'test-device', c3Aid: 'test-aid' });
+  blcp._recordReply(1, 3, null);
+  blcp._recordReply(3, 214, null);
+  assert.equal(blcp.diagnostics.length, 0);
+  for (let i = 0; i < 25; i++) blcp._recordReply(3, 185, null);
+  assert.equal(blcp.diagnostics.length, 20);
+  blcp._write = async () => {};
+  await assert.rejects(blcp._request(3, 185, new Uint8Array(), 123, 5), /超时/);
+  assert.equal(blcp.diagnostics.at(-1).outcome, 'timeout');
+  assert.equal(blcp.waiters.size, 0);
+  blcp._recordReply(2, 50, { meta: {}, lcm: { kind: 'json', data: { role: 7 } } });
+  assert.equal(blcp.diagnostics.at(-1).body.values.role, 7);
+  assert.equal(blcp.diagnostics.length, 20);
+});
+
+test('diagnostic export is read-only, account-bound and distinguishes history from receipt', async () => {
+  const client = fixture();
+  const roomState = { ...state, sentKeys: { [own]: 'private-reply-key', '999': 'another-private-key' } };
+  client.roomState = async () => ({ state: roomState, account });
+  client.blcpAccount = account.token;
+  client.blcp = { status: 1, user: { role: 7 }, joinedRooms: new Set(['123']),
+    diagnostics: [summarizeReply(3, 185, { meta: {}, lcm: { kind: 'json', data: { msgid: own } } })] };
+  client.im = async () => ({ messages: [raw(own, { type: '0', content_body: '{"text":"private-chat"}' })] });
+  await client.messages('123', '789');
+  client.getBlcp = async () => { throw new Error('must not connect or send'); };
+  client.im = async () => { throw new Error('must not request a new history read'); };
+  const report = await client.sendDiagnostics('123', '789');
+  assert.equal(report.connection.joined, true);
+  assert.equal(report.lastHistoryRead.count, 1);
+  assert.deepEqual(report.deliveryChecks, [
+    { msgid: '999', seenInCache: false, seenInLastHistoryRead: false },
+    { msgid: own, seenInCache: true, seenInLastHistoryRead: true },
+  ]);
+  for (const privateValue of [account.token, 'private-reply-key', 'another-private-key', 'private-chat', 'self-uk']) {
+    assert.ok(!JSON.stringify(report).includes(privateValue));
+  }
+  report.replies.length = 0;
+  assert.equal(client.blcp.diagnostics.length, 1);
+  client.blcpAccount = 'previous-account-token';
+  assert.equal((await client.sendDiagnostics('123', '789')).replies.length, 0);
+  client.roomState = async () => { throw new Error('account changed'); };
+  await assert.rejects(client.sendDiagnostics('123', '790'), /account changed/);
+  globalThis.chrome = { storage: { session: { clear: async () => {} }, local: { remove: async () => {} } } };
+  await client.invalidateAccount();
+  assert.equal(client.messageReads.size, 0);
+  assert.equal(client.blcp, null);
 });
 
 test('message polling returns late arrivals even when a newer cursor has already been seen', async () => {
@@ -504,8 +578,8 @@ test('background accepts only its own panel and serializes writes per message', 
     const sender = { id: 'test-id', url: 'chrome-extension://test-id/panel.html' };
     const info = await new Promise((resolve) => listener({ type: 'runtime-info' }, sender, resolve));
     assert.equal(info.ok, true);
-    assert.equal(info.data.build, '0.2.6-local');
-    assert.ok(['send-image', 'send-sticker', 'favorite-stickers', 'react', 'recall'].every((operation) => info.data.operations.includes(operation)));
+    assert.equal(info.data.build, '0.2.7-local');
+    assert.ok(['send-image', 'send-sticker', 'favorite-stickers', 'react', 'recall', 'send-diagnostics'].every((operation) => info.data.operations.includes(operation)));
     assert.equal(listener(request, { id: 'test-id', url: 'https://tieba.baidu.com/' }, () => {}), false);
     assert.equal(listener(request, { id: 'other-extension', url: sender.url }, () => {}), false);
     const first = new Promise((resolve) => listener(request, sender, resolve));

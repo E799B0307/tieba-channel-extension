@@ -47,6 +47,7 @@ export class TiebaClient {
     this.reactionCache = new Map();
     this.reactionGeneration = 0;
     this.historyCache = new Map();
+    this.messageReads = new Map();
     this.stickerCache = null;
     this.blcp = null;          // BLCPClient 单例（懒连接）
     this.blcpAccount = null;   // BLCP 已登录对应的 token
@@ -60,6 +61,7 @@ export class TiebaClient {
     this.reactionCache.clear();
     this.reactionGeneration += 1;
     this.historyCache.clear();
+    this.messageReads.clear();
     this.stickerCache = null;
     // 账号变化时断开 BLCP，下次按新账号重连
     if (this.blcp) { try { this.blcp.close(); } catch {} this.blcp = null; }
@@ -408,6 +410,23 @@ export class TiebaClient {
     return this.historyCache.get(key);
   }
 
+  async sendDiagnostics(roomId, expectedId) {
+    const { state, account } = await this.roomState(roomId, expectedId);
+    const client = this.blcpAccount === account.token ? this.blcp : null;
+    const history = this.historyCache.get(`${account.id}:${state.room}`);
+    const read = this.messageReads.get(`${account.id}:${state.room}`);
+    return {
+      generatedAt: Date.now(),
+      versions: { httpApp: APP_VERSION, httpSdk: SDK_VERSION, imApp: BLCP_CHAT_VERSION, imSdk: BLCP_SDK_VERSION },
+      connection: { status: client?.status ?? -1, role: client?.user.role ?? null, joined: !!client?.joinedRooms?.has(state.room) },
+      replies: structuredClone(client?.diagnostics || []),
+      lastHistoryRead: read ? { at: read.at, count: read.ids.size } : null,
+      deliveryChecks: Object.keys(state.sentKeys || {}).slice(-5).map((id) => ({
+        msgid: id, seenInCache: !!history?.has(id), seenInLastHistoryRead: read ? read.ids.has(id) : null,
+      })),
+    };
+  }
+
   async messages(roomId, expectedId, after = "0") {
     if (typeof after !== "string" || !/^\d{1,20}$/.test(after)) throw new Error("消息游标无效，请重新选择频道");
     const { state, account } = await this.roomState(roomId, expectedId);
@@ -420,6 +439,9 @@ export class TiebaClient {
     await this.verifyAccount(account, expectedId);
     const incoming = (data.messages || []).map(parseMessage).filter((message) => /^\d+$/.test(message.id) && (!message.room || message.room === state.room));
     const incomingIds = new Set(incoming.map((message) => message.id));
+    const readKey = `${account.id}:${state.room}`;
+    this.messageReads.set(readKey, { at: Date.now(), ids: incomingIds });
+    if (this.messageReads.size > 6) this.messageReads.delete(this.messageReads.keys().next().value);
     for (const message of incoming) {
       const previous = history.get(message.id);
       if (!message.key && message.authorId === state.authorId) message.key = state.sentKeys?.[message.id] || "";

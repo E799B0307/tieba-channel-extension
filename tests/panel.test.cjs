@@ -45,7 +45,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
       ];
       const listeners = [];
       window.calls = [];
-      window.runtimeBuild = '0.2.6-local';
+      window.runtimeBuild = '0.2.7-local';
       window.identityRole = 0;
       window.reloads = 0;
       window.failNext = '';
@@ -70,7 +70,8 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
           switch (request.type) {
             case 'runtime-info':
               if (!window.runtimeBuild) return { ok: false, error: '不支持的操作' };
-              data = { build: window.runtimeBuild, operations: ['send', 'send-image', 'send-sticker', 'favorite-stickers', 'react', 'reaction-detail', 'recall'] }; break;
+              data = { build: window.runtimeBuild, operations: ['send', 'send-image', 'send-sticker', 'favorite-stickers', 'react', 'reaction-detail', 'recall', 'send-diagnostics'] }; break;
+            case 'send-diagnostics': data = { replies: [{ methodId: 185, body: { values: { auto_risk_control_status: 2 } } }] }; break;
             case 'initialize': data = { account: { id: '789', name: '自己' }, context: { name: '嘉然' }, lastForum: '' }; break;
             case 'rooms': data = { fid: '456', name: '嘉然', rooms: [{ id: '123', name: '嘉心糖的手账本' }, { id: '124', name: '另一个频道' }] }; break;
             case 'enter': data = { room: request.room, fid: '456', authorId: 'self-uk', identityRole: request.room === '123' ? window.identityRole : 0, name: request.room === '123' ? '嘉心糖的手账本' : '另一个频道' }; break;
@@ -126,6 +127,26 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
     await page.evaluate(() => window.push([{ id: '9007199254740993223', room: '123', hidden: false, deleted: [], name: '系统', from: '0', authorId: '', text: '', image: '' }]));
     assert.equal(await page.locator('.message').count(), 2, 'legacy backend packet must not create unsupported-message bubble');
     console.log('PASS history/push filtering and recall ownership');
+
+    await page.locator('#text').fill('诊断下载不应发送这条草稿');
+    const writesBeforeDiagnostics = await page.evaluate(() => calls.filter(call => call.type.startsWith('send') && call.type !== 'send-diagnostics').length);
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: '下载发送诊断' }).click();
+    const download = await downloadPromise;
+    assert.equal(download.suggestedFilename(), 'tieba-send-diagnostics.json');
+    const diagnosticFile = path.join(output, download.suggestedFilename());
+    await download.saveAs(diagnosticFile);
+    const diagnostics = JSON.parse(await fs.readFile(diagnosticFile, 'utf8'));
+    assert.equal(diagnostics.build, '0.2.7-local');
+    assert.equal(diagnostics.replies[0].body.values.auto_risk_control_status, 2);
+    assert.equal(await page.locator('#text').inputValue(), '诊断下载不应发送这条草稿');
+    assert.equal(await page.evaluate(() => calls.filter(call => call.type.startsWith('send') && call.type !== 'send-diagnostics').length), writesBeforeDiagnostics);
+    assert.equal(await page.evaluate(() => calls.filter(call => call.type === 'send-diagnostics').at(-1).accountId), '789');
+    await page.evaluate(() => { window.failNext = 'send-diagnostics'; });
+    await page.getByRole('button', { name: '下载发送诊断' }).click();
+    await page.getByText('模拟请求失败', { exact: true }).waitFor();
+    await page.locator('#text').fill('');
+    console.log('PASS explicit diagnostic download, failure handling, and no draft submission');
 
     await other.locator('.reaction-count').click();
     await page.getByText('贴表情的小明', { exact: true }).waitFor();
@@ -314,6 +335,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
     await page.locator('#text').fill('不能交给旧后台的消息');
     assert.equal(await page.locator('#send').isDisabled(), true);
     assert.equal(await page.locator('#image-toggle').isDisabled(), true);
+    assert.equal(await page.locator('#send-diagnostics').isDisabled(), true);
     assert.equal(await other.locator('.reaction-trigger').isDisabled(), true);
     const writesBefore = await page.evaluate(() => calls.filter((call) => ['send', 'send-image', 'react', 'recall'].includes(call.type)).length);
     await page.locator('#text').press('Enter');

@@ -1,6 +1,6 @@
 {
   "name": "tieba-channel-extension",
-  "version": "0.2.6-local",
+  "version": "0.2.7-local",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22" },

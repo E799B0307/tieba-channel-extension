@@ -11,7 +11,10 @@
   <header class="topbar">
     <h1>贴吧频道</h1>
     <span id="account" class="sr-only" role="status">正在连接贴吧…</span>
-    <button id="reconnect" class="quiet" type="button">重新连接</button>
+    <div class="topbar-actions">
+      <button id="send-diagnostics" class="quiet icon-button" type="button" title="下载发送诊断" aria-label="下载发送诊断" disabled><img src="icons/file-down.svg" alt=""></button>
+      <button id="reconnect" class="quiet" type="button">重新连接</button>
+    </div>
   </header>
   <section class="picker" aria-label="选择贴吧和频道">
     <form id="forum-form" class="picker-row">

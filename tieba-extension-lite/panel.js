@@ -82,6 +82,7 @@ function controls() {
   elements["image-toggle"].disabled = elements.text.disabled || imageReading || !runtimeReady;
   elements["sticker-upload"].disabled = elements["image-toggle"].disabled;
   elements["image-cancel"].disabled = sending;
+  elements["send-diagnostics"].disabled = !room || busy || sending || !runtimeReady;
   if (elements.text.disabled) { toggleEmoji(false); toggleAt(false); toggleStickers(false); }
   elements.send.disabled = !room || busy || sending || imageReading || !runtimeReady || (!pendingImage && !elements.text.value.trim());
   elements.send.textContent = sending ? "发送中…" : "发送";
@@ -936,6 +937,24 @@ elements.rooms.addEventListener("change", () => {
   else resetRoom();
 });
 elements.reconnect.addEventListener("click", initialize);
+elements["send-diagnostics"].addEventListener("click", async () => {
+  const currentVersion = version;
+  try {
+    const diagnostics = await api("send-diagnostics", { room: room.room });
+    if (currentVersion !== version) return;
+    const blob = new Blob([JSON.stringify({ build: BUILD, ...diagnostics }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "tieba-send-diagnostics.json";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    if (currentVersion === version) showError(error);
+  }
+});
 elements["reload-extension"].addEventListener("click", () => {
   if ((pendingImage || elements.text.value.trim()) && !window.confirm("重新加载会清空未发送的文字和图片，确定继续？")) return;
   elements["reload-extension"].disabled = true;

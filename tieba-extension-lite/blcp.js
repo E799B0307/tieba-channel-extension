@@ -20,6 +20,7 @@ import {
 } from './protobuf.js';
 import { md5 as md5Pure } from './crypto.js';
 import { parseJSON } from './protocol.js';
+import { summarizeReply } from './send-diagnostics.js';
 
 export const CHAT_APPID = 10773430;
 export const CHAT_SDK_VERSION = 11250036;
@@ -167,6 +168,7 @@ export class BLCPClient {
     this.status = -1;          // -1 未连接, 0 已连接未登录, 1 已登录
     this.waiters = new Map();  // correlationId -> {resolve, reject, timer}
     this.messageHandlers = []; // 收到 notify 消息时回调
+    this.diagnostics = [];
     this._reader = null;
     this._buf = new Uint8Array(0);
     this._writeLock = Promise.resolve();
@@ -176,6 +178,12 @@ export class BLCPClient {
   }
 
   onMessage(handler) { this.messageHandlers.push(handler); }
+
+  _recordReply(serviceId, methodId, response) {
+    if (!(serviceId === 2 && methodId === 50 || serviceId === 3 && [185, 201].includes(methodId))) return;
+    this.diagnostics.push(summarizeReply(serviceId, methodId, response));
+    if (this.diagnostics.length > 20) this.diagnostics.shift();
+  }
 
   _nextClientLogId() {
     // Native Message.getMicTime uses microseconds, not nanoseconds.
@@ -278,7 +286,9 @@ export class BLCPClient {
     if (w) {
       this.waiters.delete(meta.correlationId);
       clearTimeout(w.timer);
-      w.resolve({ meta, lcmBytes, lcm: parseLcmBody(lcmBytes) });
+      const response = { meta, lcmBytes, lcm: parseLcmBody(lcmBytes) };
+      this._recordReply(w.serviceId, w.methodId, response);
+      w.resolve(response);
     }
   }
 
@@ -302,9 +312,10 @@ export class BLCPClient {
     const promise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters.delete(correlationId);
+        this._recordReply(serviceId, methodId, null);
         reject(new Error(`BLCP 请求超时 service=${serviceId} method=${methodId}`));
       }, timeoutMs);
-      this.waiters.set(correlationId, { resolve, reject, timer });
+      this.waiters.set(correlationId, { resolve, reject, timer, serviceId, methodId });
     });
 
     await this._write(packFrame(rpcBody, lcmBody));

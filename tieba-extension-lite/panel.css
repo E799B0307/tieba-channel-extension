@@ -11,6 +11,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid #bfdbfe;border-color:#
 input:disabled,select:disabled,textarea:disabled{background:#f4f6fa;color:#7d8ba0}
 [hidden]{display:none!important}
 .topbar{display:flex;flex-shrink:0;align-items:center;justify-content:space-between;gap:8px;padding:6px 12px;background:#fff;border-bottom:1px solid #e8edf5}
+.topbar-actions{display:flex;align-items:center;gap:6px}.topbar .icon-button{display:grid;place-items:center;width:28px;height:28px;padding:5px}.topbar .icon-button img{width:18px;height:18px}
 h1{font-size:14px;line-height:26px;margin:0;font-weight:700}
 .quiet{background:#eff4ff;color:#3c65b5;font-size:12px;line-height:20px;padding:3px 8px;border-radius:6px}.quiet:hover{background:#e2ebff}
 .picker{display:grid;flex-shrink:0;gap:6px;padding:8px 12px;background:#fff;border-bottom:1px solid #e8edf5}
