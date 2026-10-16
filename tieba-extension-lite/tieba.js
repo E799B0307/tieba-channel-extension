@@ -684,7 +684,7 @@ export class TiebaClient {
     const requestData = {
       method: 185,
       mcast_id: Number(state.room),    // 必须是数字——字符串会报 "mcast_id error"(err_code=5)
-      role: 3,
+      role: blcp.user.role ?? 3,
       token: account.token,            // BDUSS
       appid: APP_ID,
       uk: blcp.user.uk,
@@ -772,7 +772,7 @@ export class TiebaClient {
     const requestData = {
       method: 185,
       mcast_id: Number(room),
-      role: 3,
+      role: blcp.user.role ?? 3,
       token: botAccount.token,
       appid: APP_ID,
       uk: blcp.user.uk,

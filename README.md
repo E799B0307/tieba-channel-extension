@@ -2,11 +2,11 @@
 
 在 Chrome / Edge 侧边栏里使用贴吧频道的非官方扩展，支持文字、回复、@、贴表情、查看贴表情的人、图片和收藏表情，以及按频道权限撤回消息。
 
-当前版本：`0.2.5-local`。项目仍在开发中，手机端云收藏及实际账号发送效果需要继续验证；本地自动测试使用模拟数据，不代表贴吧服务端已通过实测。
+当前版本：`0.2.6-local`。项目仍在开发中，手机端云收藏及实际账号发送效果需要继续验证；本地自动测试使用模拟数据，不代表贴吧服务端已通过实测。
 
 ## 下载使用
 
-下载 [最新发布版](https://github.com/E799B0307/tieba-channel-extension/releases/latest) 中的 `tieba-channel-extension-0.2.5-local-windows.zip`，解压到固定目录。不要把 GitHub 的 `Source code.zip` 当作完整安装包，它不含配套代理。
+下载 [最新发布版](https://github.com/E799B0307/tieba-channel-extension/releases/latest) 中的 `tieba-channel-extension-0.2.6-local-windows.zip`，解压到固定目录。不要把 GitHub 的 `Source code.zip` 当作完整安装包，它不含配套代理。
 
 1. 打开 `chrome://extensions` 或 `edge://extensions`，开启开发者模式，选择“加载已解压的扩展程序”，选中解压后的 `tieba-extension-lite` 文件夹。
 2. 启动同一目录下的 `tieba-proxy.exe`，保持它运行。代理使用本机 `127.0.0.1:8765`，消息发送需要它。

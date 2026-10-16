@@ -45,7 +45,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
       ];
       const listeners = [];
       window.calls = [];
-      window.runtimeBuild = '0.2.5-local';
+      window.runtimeBuild = '0.2.6-local';
       window.identityRole = 0;
       window.reloads = 0;
       window.failNext = '';

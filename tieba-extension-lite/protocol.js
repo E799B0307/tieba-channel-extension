@@ -112,7 +112,7 @@ export function messageMetadata(account, state, level, portrait, content = {}, t
     schema: `https://tieba.baidu.com/mo/q/wise-bawu-core/forum-level?customfullscreen=1&forum_id=${state.fid}&nonavigationbar=1&obj_locate=5&portrait=${portrait}`,
   } });
   return { main_data: mainData, is_sys_msg: 0, version: "", portrait, robot_role: 0, role: 0,
-    send_status: 0, from: "ios", session_id: Number(state.room), type, user_name: account.name,
+    send_status: 0, from: "android", session_id: Number(state.room), type, user_name: account.name,
     content, level, forum_id: Number(state.fid) };
 }
 

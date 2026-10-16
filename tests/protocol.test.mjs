@@ -134,7 +134,7 @@ test('favorite sending resolves the server catalog, preserves the original and p
   client.app = async (url) => url.endsWith('getAllMeme') ? { data: { pic_ids: [favoriteRow] } } : { user_level: 12 };
   let writes = 0;
   let packet;
-  client.getBlcp = async () => ({ joinedRooms: new Set(['123']), user: { uk: 888, triggerId: 9 },
+  client.getBlcp = async () => ({ joinedRooms: new Set(['123']), user: { uk: 888, triggerId: 9, role: 7 },
     sendMethod185: async (request) => { writes++; packet = request; return '999'; } });
   client.uploadImage = async () => { throw new Error('must not upload a favorite'); };
   globalThis.chrome = { storage: { session: { get: async () => ({ 'room:123': state }), set: async () => {} } } };
@@ -145,6 +145,8 @@ test('favorite sending resolves the server catalog, preserves the original and p
   const content = JSON.parse(JSON.parse(packet.content).text);
   assert.equal(JSON.parse(content.content_body).url, favoriteRow.pic_url.replace('http:', 'https:'));
   assert.equal(content.content_type, '1');
+  assert.equal(packet.role, 7, 'send role must come from the authenticated IM session');
+  assert.equal(JSON.parse(content.ext).from, 'android');
   assert.equal(JSON.parse(content.ext).content.big_size, '100,50');
   assert.equal(content.re_data.re_msg_id, own);
 });
@@ -332,6 +334,49 @@ test('BLCP acknowledgements and notifications preserve unquoted 64-bit message I
   assert.equal(packet.messages[0].from_user, 321);
 });
 
+test('send and join use native microseconds and unique safe request IDs', async (t) => {
+  const now = 1792152000123;
+  t.mock.method(Date, 'now', () => now);
+  const blcp = new BLCPClient({ bduss: 'test', cuidGalaxy2: 'device', c3Aid: '' });
+  blcp.status = 1;
+  const calls = [];
+  blcp._request = async (service, method, bytes, correlation) => {
+    const body = JSON.parse(new TextDecoder().decode(bytes));
+    calls.push({ service, method, body, correlation });
+    return { meta: { errorCode: 0 }, lcm: { kind: 'json', data: { err_code: 0,
+      response_params: method === 201 ? { mcast_id: 123 } : { msgid: own } } } };
+  };
+  await blcp.joinChatRoom(123);
+  await Promise.all([blcp.sendMethod185({}), blcp.sendMethod185({})]);
+  for (const call of calls) {
+    assert.ok(Number.isSafeInteger(call.body.client_logid));
+    assert.ok(call.body.client_logid >= now * 1000 && call.body.client_logid < now * 1000 + 1000);
+    if (call.method === 185) assert.equal(call.correlation, call.body.client_logid);
+  }
+  assert.equal(new Set(calls.map(call => call.body.client_logid)).size, 3);
+});
+
+test('joining requires a successful reply for the requested room', async () => {
+  const blcp = new BLCPClient({ bduss: 'test', cuidGalaxy2: 'device', c3Aid: '' });
+  blcp.status = 1;
+  let data = { err_code: 0, response_params: { mcast_id: 999 } };
+  blcp._request = async () => ({ meta: { errorCode: 0 }, lcm: { kind: 'json', data } });
+  await assert.rejects(blcp.joinChatRoom(123), /频道|房间/);
+  data = { err_code: 0 };
+  await assert.rejects(blcp.joinChatRoom(123), /频道|房间/);
+  data = { err_code: 0, response_params: { mcast_id: '123' } };
+  assert.equal(await blcp.joinChatRoom(123), true);
+});
+
+test('login retains the server role for subsequent sends', async () => {
+  const blcp = new BLCPClient({ bduss: 'test', cuidGalaxy2: 'device', c3Aid: '' });
+  blcp.generateLcmToken = async () => 'test-lcm-token';
+  blcp._request = async (service) => ({ meta: { errorCode: 0 }, lcm: { kind: 'json', data: service === 2
+    ? { err_code: 0, uk: 888, bd_uid: 789, trigger_id: [9], role: 7 } : { errno: 0 } } });
+  await blcp.login();
+  assert.equal(blcp.user.role, 7);
+});
+
 test('send acknowledgements reject server errors and unsafe IDs without retrying', async () => {
   const blcp = new BLCPClient({ bduss: 'test', cuidGalaxy2: 'device', c3Aid: '' });
   blcp.status = 1;
@@ -459,7 +504,7 @@ test('background accepts only its own panel and serializes writes per message', 
     const sender = { id: 'test-id', url: 'chrome-extension://test-id/panel.html' };
     const info = await new Promise((resolve) => listener({ type: 'runtime-info' }, sender, resolve));
     assert.equal(info.ok, true);
-    assert.equal(info.data.build, '0.2.5-local');
+    assert.equal(info.data.build, '0.2.6-local');
     assert.ok(['send-image', 'send-sticker', 'favorite-stickers', 'react', 'recall'].every((operation) => info.data.operations.includes(operation)));
     assert.equal(listener(request, { id: 'test-id', url: 'https://tieba.baidu.com/' }, () => {}), false);
     assert.equal(listener(request, { id: 'other-extension', url: sender.url }, () => {}), false);

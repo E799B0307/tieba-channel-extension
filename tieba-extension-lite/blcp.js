@@ -172,10 +172,16 @@ export class BLCPClient {
     this._writeLock = Promise.resolve();
 
     // 登录后填充
-    this.user = { userId: 0, portrait: '', nickName: '', uk: 0, triggerId: -1, bdUid: 0, loginId: 0, isVip: false, glevel: 0 };
+    this.user = { userId: 0, portrait: '', nickName: '', uk: 0, triggerId: -1, bdUid: 0, loginId: 0, role: 3, isVip: false, glevel: 0 };
   }
 
   onMessage(handler) { this.messageHandlers.push(handler); }
+
+  _nextClientLogId() {
+    // Native Message.getMicTime uses microseconds, not nanoseconds.
+    this._clientLogId = Math.max(Date.now() * 1000, (this._clientLogId || 0) + 1);
+    return this._clientLogId;
+  }
 
   /* ---------- 连接（经本地代理转发到 TCP+TLS） ---------- */
   async connect() {
@@ -367,7 +373,7 @@ export class BLCPClient {
       },
       rpc: JSON.stringify({ rpc_retry_time: 0 }),
       user_type: 0,
-      client_logid: Math.floor(Date.now() * 1000),
+      client_logid: this._nextClientLogId(),
     };
     const lcm3 = new TextEncoder().encode(JSON.stringify(reqdict3));
     const r3 = await this._request(2, 50, lcm3, 2000003149381050);
@@ -380,6 +386,8 @@ export class BLCPClient {
     this.user.bdUid = Number(rep.bd_uid) || 0;
     this.user.triggerId = Number(rep.trigger_id?.[0]) || -1;
     this.user.loginId = Number(rep.login_id) || 0;
+    this.user.role = Number(rep.role ?? 3);
+    if (!Number.isSafeInteger(this.user.role) || this.user.role < 0) throw new Error('聊天登录返回了无效身份，请重新连接');
 
     this.status = 1;
     return this.user;
@@ -463,27 +471,30 @@ export class BLCPClient {
   /* ---------- 加入聊天室 ---------- */
   async joinChatRoom(chatroomId) {
     if (this.status !== 1) throw new Error('IM 未登录');
+    const clientLogId = this._nextClientLogId();
     const reqdict = {
       method: 201,
       mcast_id: chatroomId,
       appid: CHAT_APPID,
       uk: this.user.uk,
       origin_id: this.user.triggerId,
-      msg_key: 'k' + Math.floor(Date.now() * 100000),
+      msg_key: 'k' + clientLogId,
       sdk_version: CHAT_SDK_VERSION,
       is_reliable: false,
-      client_logid: Math.floor(Date.now() * 1000 * 1000),
+      client_logid: clientLogId,
       rpc: JSON.stringify({ rpc_retry_time: 0 }),
     };
     const lcm = new TextEncoder().encode(JSON.stringify(reqdict));
-    const r = await this._request(3, 201, lcm);
+    const r = await this._request(3, 201, lcm, clientLogId);
     const d = r.lcm.kind === 'json' ? r.lcm.data : null;
-    if (r.meta.errorText && r.meta.errorText !== 'success') {
+    if (Number(r.meta.errorCode || 0) !== 0 || r.meta.errorText && r.meta.errorText !== 'success') {
       throw new Error(`加入房间失败: err_code=${r.meta.errorCode} ${r.meta.errorText}`);
     }
-    if (d && d.err_code !== undefined && d.err_code !== 0) {
+    if (d && Number(d.err_code ?? d.error_code ?? 0) !== 0) {
       throw new Error(`加入房间失败: err_code=${d.err_code} ${d.err_msg || d.errmsg || d.error_msg || ''}`);
     }
+    const joined = d?.response_params?.mcast_id ?? d?.mcast_id;
+    if (String(joined ?? '') !== String(chatroomId)) throw new Error('服务器未确认加入所选频道，请重新连接');
     return true;
   }
 
@@ -499,7 +510,7 @@ export class BLCPClient {
   /** 发送一个已构造好的 method185 请求体，返回服务端 msgid（字符串） */
   async sendMethod185(requestData) {
     if (this.status !== 1) throw new Error('IM 未登录');
-    const correlationId = Math.floor(Date.now() * 1000 * 1000);
+    const correlationId = this._nextClientLogId();
     requestData.client_logid = correlationId;
     requestData.rpc = JSON.stringify({ rpc_retry_time: 0 });
 
@@ -523,7 +534,7 @@ export class BLCPClient {
 
   async react(requestData) {
     if (this.status !== 1) throw new Error('IM 未登录');
-    const correlationId = this._reactionId = Math.max(Date.now() * 1000, (this._reactionId || 0) + 1);
+    const correlationId = this._nextClientLogId();
     const body = { ...requestData, client_logid: correlationId, rpc: JSON.stringify({ rpc_retry_time: 0 }) };
     const response = await this._request(3, 214, new TextEncoder().encode(JSON.stringify(body)), correlationId);
     const data = response.lcm.kind === 'json' ? response.lcm.data : null;
@@ -578,7 +589,7 @@ export class BLCPClient {
     const requestData = {
       method: 185,
       mcast_id: roomId,
-      role: 3,
+      role: user.role ?? 3,
       token: this.bduss,
       appid: CHAT_APPID,
       uk: user.uk,
