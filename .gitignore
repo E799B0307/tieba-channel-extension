@@ -4,6 +4,8 @@ release-assets/
 *.log
 *.zip
 tieba-proxy.exe
+proxy.exe
+tieba-extension-lite/dist/
 .env
 .env.*
 !.env.example

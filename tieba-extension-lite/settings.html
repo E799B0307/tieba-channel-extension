@@ -3,39 +3,116 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>嘉然吧自动撤回 · 贴吧频道</title>
+  <title>贴吧频道聊天室 · 设置</title>
+  <link rel="stylesheet" href="panel.css">
   <link rel="stylesheet" href="settings.css">
   <script type="module" src="settings.js"></script>
 </head>
 <body>
-  <main>
-    <header><div><h1>嘉然吧自动撤回</h1><p id="status" role="status">正在加载</p></div><button id="stop" class="danger" type="button" disabled>立即停用</button></header>
-    <p id="notice" role="alert" hidden></p>
-    <form id="settings-form">
-      <section aria-labelledby="account-heading">
-        <h2 id="account-heading">机器人账号</h2>
-        <label class="check"><input id="enabled" type="checkbox">自动撤回</label>
-        <label for="token">独立机器人 BDUSS</label>
-        <input id="token" type="password" maxlength="2048" autocomplete="off" spellcheck="false">
-        <label class="check secondary"><input id="clear-token" type="checkbox">清除已保存凭据</label>
-      </section>
-      <section aria-labelledby="words-heading">
-        <h2 id="words-heading">撤回关键词</h2>
-        <label for="words">正文包含匹配，不区分英文字母大小写</label>
-        <textarea id="words" rows="7" placeholder="每行一个关键词" maxlength="20200"></textarea>
-        <div class="actions"><span id="saved-state" role="status"></span><button id="save" type="submit" disabled>保存设置</button></div>
-      </section>
-    </form>
-    <section aria-labelledby="rooms-heading">
-      <h2 id="rooms-heading">嘉然吧频道</h2>
-      <ul id="rooms"></ul><p id="rooms-empty" class="secondary">尚未添加频道</p>
+  <header class="topbar">
+    <h1>机器人设置</h1>
+    <button id="save" class="quiet" type="button">保存</button>
+  </header>
+
+  <main class="settings">
+    <div id="notice" class="settings-notice" role="alert" hidden></div>
+
+    <section class="card">
+      <h2>机器人总开关</h2>
+      <div class="field switch-field">
+        <input id="bot-enabled" type="checkbox">
+        <label for="bot-enabled">启用机器人</label>
+      </div>
+      <p class="hint">关闭后不再响应命令、不再记录违禁词、不再推送 B站通知。</p>
     </section>
-    <section aria-labelledby="log-heading">
-      <div class="section-heading"><h2 id="log-heading">处理记录</h2><button id="refresh" class="icon-button" type="button" title="刷新处理记录" aria-label="刷新处理记录"><img src="icons/refresh-cw.svg" alt=""></button></div>
-      <div class="table-scroll"><table><thead><tr><th>时间 / 频道</th><th>消息 / 命中词</th><th>处理状态</th></tr></thead><tbody id="records"></tbody></table></div>
-      <p id="records-empty" class="secondary">暂无处理记录</p>
+
+    <section class="card">
+      <h2>基本设置</h2>
+      <div class="field">
+        <label for="bot-name">机器人昵称</label>
+        <input id="bot-name" maxlength="60" autocomplete="off" placeholder="与贴吧显示名一致，用于识别 @">
+        <p class="hint">别人 @ 这个名字时机器人才会响应。留空则只响应违禁词。</p>
+      </div>
+      <div class="field">
+        <label for="bot-bduss">机器人账号 BDUSS（可选）</label>
+        <input id="bot-bduss" maxlength="256" autocomplete="off" placeholder="粘贴独立机器人账号的 BDUSS，留空则机器人用当前聊天账号发言">
+        <p class="hint">机器人版专用：填独立账号的 BDUSS 后，机器人会以该账号身份发言（与你的聊天账号分开）。留空则机器人用你当前登录的账号回复。</p>
+      </div>
+      <div class="field">
+        <label for="bili-uid">B站 UID</label>
+        <input id="bili-uid" inputmode="numeric" autocomplete="off" placeholder="例如 672328094">
+        <p class="hint">用于 /latest 命令和直播、动态监控。</p>
+      </div>
+      <div class="field">
+        <label for="warn-text">违禁词提示语</label>
+        <input id="warn-text" maxlength="100" autocomplete="off">
+        <p class="hint">目前仅记录不发送，保留此项供以后开启公屏提示。</p>
+      </div>
     </section>
-    <footer><span id="version"></span><a href="privacy.html" target="_blank" rel="noopener">隐私说明</a></footer>
+
+    <section class="card">
+      <h2>启用的房间</h2>
+      <ul id="room-list" class="pill-list"></ul>
+      <p id="room-empty" class="hint">还没有添加房间。在侧边栏进入频道后，点击「添加到机器人」即可。</p>
+    </section>
+
+    <section class="card">
+      <h2>违禁词</h2>
+      <div class="row">
+        <input id="badword-input" maxlength="40" autocomplete="off" placeholder="输入要屏蔽的关键词">
+        <button id="badword-add" type="button">添加</button>
+      </div>
+      <ul id="badword-list" class="pill-list"></ul>
+      <p id="badword-empty" class="hint">还没有设置违禁词。命中后仅静默记录，不会公屏回复。</p>
+    </section>
+
+    <section class="card">
+      <h2>撤回关键词</h2>
+      <p class="hint">命中这些关键词的消息会被机器人自动撤回。⚠️ 需要机器人账号（下方「基本设置」里的 BDUSS）在对应频道拥有管理权限（吧主/小吧主），否则撤回会被贴吧拒绝。</p>
+      <div class="row">
+        <input id="recallword-input" maxlength="40" autocomplete="off" placeholder="输入要自动撤回的关键词">
+        <button id="recallword-add" type="button">添加</button>
+      </div>
+      <ul id="recallword-list" class="pill-list"></ul>
+      <p id="recallword-empty" class="hint">还没有设置撤回关键词。命中后机器人会尝试撤回，结果见侧边栏「🤖 日志」。</p>
+    </section>
+
+    <section class="card">
+      <h2>管理员</h2>
+      <p class="hint">管理员可在聊天室内使用 /banword、/unbanword、/listbadwords 命令。UID 填贴吧用户 ID（数字，即该用户主页网址里的那串数字）。</p>
+      <div class="row">
+        <select id="admin-room" class="admin-room"></select>
+        <input id="admin-uid" inputmode="numeric" maxlength="20" autocomplete="off" placeholder="用户 UID（数字）">
+        <button id="admin-add" type="button">添加</button>
+      </div>
+      <ul id="admin-list" class="admin-list"></ul>
+      <p id="admin-empty" class="hint">还没有设置管理员。先在「启用的房间」里添加房间，再选择房间并填入管理员 UID。</p>
+    </section>
+
+    <section class="card">
+      <h2>订阅状态</h2>
+      <p class="hint">订阅由聊天室内的 /sub、/unsub 命令控制，这里仅查看。</p>
+      <ul id="subscription-list" class="pill-list"></ul>
+      <p id="subscription-empty" class="hint">当前没有任何订阅。</p>
+    </section>
+
+    <section class="card">
+      <h2>违规记录</h2>
+      <p class="hint">最多保留最近 2000 条，可在任意房间的 @ /status 之外通过在聊天室发送 /listbadwords 查看关键词。</p>
+      <div class="row">
+        <button id="violation-export" type="button">导出为 .log 文件</button>
+        <button id="violation-clear" class="danger" type="button">清空记录</button>
+      </div>
+      <pre id="violation-preview" class="preview" hidden></pre>
+    </section>
+
+    <section class="card">
+      <h2>说明</h2>
+      <p class="hint">
+        机器人运行在侧边栏面板页面内，面板关闭时不会响应命令。
+        B站监控由浏览器定时唤醒，最短 5 分钟检查一次，仍需面板所在浏览器处于运行状态。
+      </p>
+    </section>
   </main>
 </body>
 </html>

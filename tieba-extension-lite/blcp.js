@@ -20,7 +20,6 @@ import {
 } from './protobuf.js';
 import { md5 as md5Pure } from './crypto.js';
 import { parseJSON } from './protocol.js';
-import { summarizeReply } from './send-diagnostics.js';
 
 export const CHAT_APPID = 10773430;
 export const CHAT_SDK_VERSION = 11250036;
@@ -168,28 +167,15 @@ export class BLCPClient {
     this.status = -1;          // -1 未连接, 0 已连接未登录, 1 已登录
     this.waiters = new Map();  // correlationId -> {resolve, reject, timer}
     this.messageHandlers = []; // 收到 notify 消息时回调
-    this.diagnostics = [];
     this._reader = null;
     this._buf = new Uint8Array(0);
     this._writeLock = Promise.resolve();
 
     // 登录后填充
-    this.user = { userId: 0, portrait: '', nickName: '', uk: 0, triggerId: -1, bdUid: 0, loginId: 0, role: 3, isVip: false, glevel: 0 };
+    this.user = { userId: 0, portrait: '', nickName: '', uk: 0, triggerId: -1, bdUid: 0, loginId: 0, isVip: false, glevel: 0 };
   }
 
   onMessage(handler) { this.messageHandlers.push(handler); }
-
-  _recordReply(serviceId, methodId, response) {
-    if (!(serviceId === 2 && methodId === 50 || serviceId === 3 && [185, 201].includes(methodId))) return;
-    this.diagnostics.push(summarizeReply(serviceId, methodId, response));
-    if (this.diagnostics.length > 20) this.diagnostics.shift();
-  }
-
-  _nextClientLogId() {
-    // Native Message.getMicTime uses microseconds, not nanoseconds.
-    this._clientLogId = Math.max(Date.now() * 1000, (this._clientLogId || 0) + 1);
-    return this._clientLogId;
-  }
 
   /* ---------- 连接（经本地代理转发到 TCP+TLS） ---------- */
   async connect() {
@@ -286,9 +272,7 @@ export class BLCPClient {
     if (w) {
       this.waiters.delete(meta.correlationId);
       clearTimeout(w.timer);
-      const response = { meta, lcmBytes, lcm: parseLcmBody(lcmBytes) };
-      this._recordReply(w.serviceId, w.methodId, response);
-      w.resolve(response);
+      w.resolve({ meta, lcmBytes, lcm: parseLcmBody(lcmBytes) });
     }
   }
 
@@ -312,10 +296,9 @@ export class BLCPClient {
     const promise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters.delete(correlationId);
-        this._recordReply(serviceId, methodId, null);
         reject(new Error(`BLCP 请求超时 service=${serviceId} method=${methodId}`));
       }, timeoutMs);
-      this.waiters.set(correlationId, { resolve, reject, timer, serviceId, methodId });
+      this.waiters.set(correlationId, { resolve, reject, timer });
     });
 
     await this._write(packFrame(rpcBody, lcmBody));
@@ -384,7 +367,7 @@ export class BLCPClient {
       },
       rpc: JSON.stringify({ rpc_retry_time: 0 }),
       user_type: 0,
-      client_logid: this._nextClientLogId(),
+      client_logid: Math.floor(Date.now() * 1000),
     };
     const lcm3 = new TextEncoder().encode(JSON.stringify(reqdict3));
     const r3 = await this._request(2, 50, lcm3, 2000003149381050);
@@ -397,8 +380,6 @@ export class BLCPClient {
     this.user.bdUid = Number(rep.bd_uid) || 0;
     this.user.triggerId = Number(rep.trigger_id?.[0]) || -1;
     this.user.loginId = Number(rep.login_id) || 0;
-    this.user.role = Number(rep.role ?? 3);
-    if (!Number.isSafeInteger(this.user.role) || this.user.role < 0) throw new Error('聊天登录返回了无效身份，请重新连接');
 
     this.status = 1;
     return this.user;
@@ -482,30 +463,27 @@ export class BLCPClient {
   /* ---------- 加入聊天室 ---------- */
   async joinChatRoom(chatroomId) {
     if (this.status !== 1) throw new Error('IM 未登录');
-    const clientLogId = this._nextClientLogId();
     const reqdict = {
       method: 201,
       mcast_id: chatroomId,
       appid: CHAT_APPID,
       uk: this.user.uk,
       origin_id: this.user.triggerId,
-      msg_key: 'k' + clientLogId,
+      msg_key: 'k' + Math.floor(Date.now() * 100000),
       sdk_version: CHAT_SDK_VERSION,
       is_reliable: false,
-      client_logid: clientLogId,
+      client_logid: Math.floor(Date.now() * 1000 * 1000),
       rpc: JSON.stringify({ rpc_retry_time: 0 }),
     };
     const lcm = new TextEncoder().encode(JSON.stringify(reqdict));
-    const r = await this._request(3, 201, lcm, clientLogId);
+    const r = await this._request(3, 201, lcm);
     const d = r.lcm.kind === 'json' ? r.lcm.data : null;
-    if (Number(r.meta.errorCode || 0) !== 0 || r.meta.errorText && r.meta.errorText !== 'success') {
+    if (r.meta.errorText && r.meta.errorText !== 'success') {
       throw new Error(`加入房间失败: err_code=${r.meta.errorCode} ${r.meta.errorText}`);
     }
-    if (d && Number(d.err_code ?? d.error_code ?? 0) !== 0) {
+    if (d && d.err_code !== undefined && d.err_code !== 0) {
       throw new Error(`加入房间失败: err_code=${d.err_code} ${d.err_msg || d.errmsg || d.error_msg || ''}`);
     }
-    const joined = d?.response_params?.mcast_id ?? d?.mcast_id;
-    if (String(joined ?? '') !== String(chatroomId)) throw new Error('服务器未确认加入所选频道，请重新连接');
     return true;
   }
 
@@ -521,7 +499,7 @@ export class BLCPClient {
   /** 发送一个已构造好的 method185 请求体，返回服务端 msgid（字符串） */
   async sendMethod185(requestData) {
     if (this.status !== 1) throw new Error('IM 未登录');
-    const correlationId = this._nextClientLogId();
+    const correlationId = Math.floor(Date.now() * 1000 * 1000);
     requestData.client_logid = correlationId;
     requestData.rpc = JSON.stringify({ rpc_retry_time: 0 });
 
@@ -545,7 +523,7 @@ export class BLCPClient {
 
   async react(requestData) {
     if (this.status !== 1) throw new Error('IM 未登录');
-    const correlationId = this._nextClientLogId();
+    const correlationId = this._reactionId = Math.max(Date.now() * 1000, (this._reactionId || 0) + 1);
     const body = { ...requestData, client_logid: correlationId, rpc: JSON.stringify({ rpc_retry_time: 0 }) };
     const response = await this._request(3, 214, new TextEncoder().encode(JSON.stringify(body)), correlationId);
     const data = response.lcm.kind === 'json' ? response.lcm.data : null;
@@ -600,7 +578,7 @@ export class BLCPClient {
     const requestData = {
       method: 185,
       mcast_id: roomId,
-      role: user.role ?? 3,
+      role: 3,
       token: this.bduss,
       appid: CHAT_APPID,
       uk: user.uk,

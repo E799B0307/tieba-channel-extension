@@ -1,70 +1,35 @@
 # 贴吧频道聊天室
 
-在 Chrome / Edge 侧边栏里使用贴吧频道的非官方扩展，支持文字、回复、@、贴表情、查看贴表情的人、图片和收藏表情，以及按频道权限撤回消息。
+当前主分支使用用户提供的 `tieba-extension` 完整项目，包含频道聊天、图片、收藏表情、贴表情、消息撤回和机器人功能。源码版本为 `0.2.5-local`，保留了提供项目原有的版本号。
 
-当前开发版本：`0.2.11-local`。新增嘉然吧频道关键词自动撤回，默认关闭，使用单独配置的机器人账号执行并检查频道管理权限。文字发送沿用上一版 HTTPS 流程；现有诊断仍显示消息受理后未送达，这个问题尚未解决。
+2026-10-17 已整体替换插件源码。这个构建与本仓库历史 Releases 中同名版本的内容不同，请以当前 `main` 提交为准，历史安装包尚未同步本次替换。
 
-## 下载使用
+## 使用
 
-下载 [发布页](https://github.com/E799B0307/tieba-channel-extension/releases) 中标有版本号的 `tieba-channel-extension-*-windows.zip`，解压到固定目录。开发分支可能先于安装包更新，请以侧栏底部版本为准。不要把 GitHub 的 `Source code.zip` 当作完整安装包，它不含配套代理。
+1. 克隆本仓库或下载当前 `main` 的源码。
+2. 在 Chrome / Edge 的扩展管理页启用开发者模式，加载 `tieba-extension-lite`。目录名为兼容已有加载路径而保留，里面现在是完整版；已加载此目录的用户重新加载扩展即可。
+3. 启动配套 `tieba-proxy.exe`；也可以用 Node.js 运行 `node tieba-extension-lite/proxy/proxy.js`。代理监听本机 `127.0.0.1:8765`。
+4. 在贴吧网页版登录账号，打开侧栏并选择频道。机器人配置入口位于侧栏“设置”及扩展选项页。
 
-1. 打开 `chrome://extensions` 或 `edge://extensions`，开启开发者模式，选择“加载已解压的扩展程序”，选中解压后的 `tieba-extension-lite` 文件夹。
-2. 启动同一目录下的 `tieba-proxy.exe`，保持它运行。代理使用本机 `127.0.0.1:8765`，用于实时推送、贴表情及图片上传准备；普通文字和云收藏表情发送走 HTTPS。
-3. 在 [贴吧网页版](https://tieba.baidu.com/) 登录自己的账号，点击扩展图标，在侧边栏选择贴吧和频道。
+配套 Windows 代理二进制与提供项目中的文件 SHA-256 一致，未修改，不纳入 Git。现提供项目的代理源码也一并保存在 `tieba-extension-lite/proxy/`，未验证二进制与这份源码的构建对应关系。
 
-代理是原配套 Windows 二进制，本仓库没有它的源码，也未修改它。发布页提供 SHA-256 校验文件；它未附代码签名，请自行确认来源可信，不要授予不必要的管理员权限。
+完整版使用说明见 [项目说明](tieba-extension-lite/README.md)、[机器人说明](tieba-extension-lite/docs/bot.md) 和 [隐私说明](tieba-extension-lite/privacy.html)。
 
-账号凭据不随安装包分发。每位使用者登录自己的贴吧账号，不需要向维护者提供密码、BDUSS 或 Cookie。详见 [隐私说明](tieba-extension-lite/privacy.html) 和 [详细使用说明](tieba-extension-lite/README.md)。
-
-## 发送诊断
-
-需要定位发送故障时，可在手动发送后点击右上角“下载发送诊断”图标，将 `tieba-send-diagnostics.json` 附在问题反馈中。拿到回执并不代表已送达，不要反复重发同一条消息；下载前不要再次重新加载扩展，否则内存记录会清空。
-
-诊断只保留最近 20 条 BLCP 登录、入频道和发送响应摘要，以及最近一次 HTTPS 发送响应摘要、历史读取的数量和命中情况。账号一致性仅输出是否相符，不输出标识值。不导出聊天正文、服务端提示原文、用户资料、登录凭据或设备标识，不自动上传，也不重发消息。
-
-## 嘉然吧自动撤回
-
-1. 重新加载扩展，在侧栏查找“嘉然”并进入需要管理的频道，点击频道标题旁的加号。
-2. 在设置页填写独立机器人账号的 BDUSS、撤回关键词（每行一个），勾选自动撤回并保存。机器人必须有该频道的管理权限；昵称或自定义管理员名单不能授予权限。
-3. 设置页可随时“立即停用”、移除频道、清除保存的机器人凭据，并查看处理记录。
-
-规则为正文包含关键词，忽略英文字母大小写。只处理启用及添加频道之后、最近五分钟内的新消息；不扫描旧历史，不处理系统消息和 bot 自己的消息。实时推送触发检测，后台每分钟补读消息并恢复频道连接。关闭侧栏仍可工作，但浏览器关闭、网页登录失效或后台被系统暂停时不保证及时处理。
-
-缺少消息标识会等待补读；已提交或结果未知的请求不会自动重复提交。日志中的“请求受理，等待确认”仅表示接口回包成功，收到频道撤回事件后才显示“已确认撤回”。真实账号的自动撤回效果尚未在线验证，测试使用模拟接口，不会撤回真实消息。详见 [bot 接入审查](docs/bot-review.md)。
-
-## 一起开发
-
-- 反馈问题：[Issues](https://github.com/E799B0307/tieba-channel-extension/issues)。请附插件版本、复现步骤和脱敏截图，不要上传 Cookie、Token 或完整私人聊天记录。
-- 提交修改：Fork 仓库，新建分支，提交 Pull Request 到 `main`，说明改动和测试结果。
-- 直接参与维护：由仓库所有者按具体 GitHub 账号邀请 Collaborator。公开仓库不会让所有人直接覆盖主分支。
-
-参见 [贡献说明](CONTRIBUTING.md)。
-
-## 本地开发
-
-需要 Node.js 22 或更高版本。扩展本身是原生 JavaScript，不需要打包或启动开发服务器。
+## 开发与检查
 
 ```sh
-git clone https://github.com/E799B0307/tieba-channel-extension.git
-cd tieba-channel-extension
 npm ci
 npm test
 npx playwright install chromium
 npm run test:ui
 ```
 
-浏览器开发模式加载 `tieba-extension-lite`，修改后重新加载扩展并重新打开侧边栏。界面测试截图输出到 `artifacts`；测试不会登录真实账号、发送真实消息或撤回别人的消息。
+`npm test` 运行提供项目随附的解析、加密、设备标识、BLCP 请求体及帧检查，并检查语法和资源引用。`npm run test:ui` 使用模拟接口检查聊天页、机器人入口和设置页；已有 Chrome 可通过 `CHROME_PATH` 指定可执行文件。
 
-已有 Chrome 可通过环境变量 `CHROME_PATH` 指定完整可执行文件路径，供界面测试使用。手动测试发送功能时，另从 Releases 获取代理。
+这些检查不登录真实账号，也不发送或撤回频道消息。此前消息未送达的问题需在该基准上重新实测，目前没有确认已修复。
 
-## 目录
+提供项目中的 `build-lite.ps1` 和 `variants/lite/` 一并保留，用于生成纯聊天精简版。生成输出、依赖目录和二进制不纳入 Git。
 
-| 路径 | 内容 |
-| --- | --- |
-| `tieba-extension-lite/` | 扩展代码、图标和隐私说明 |
-| `tests/` | 协议单元测试和模拟界面测试 |
-| `.github/workflows/test.yml` | 推送与 PR 自动测试 |
+## 协作
 
-## 来源
-
-原版作者为 Lotus，参考项目为 [Lostlitus/chrome-tieba-channel-extension](https://github.com/Lostlitus/chrome-tieba-channel-extension)。本仓库保留来源说明，并整理本地修改供协作维护。第三方组件和素材说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；本次没有新增覆盖第三方代码或素材的统一许可证。
+欢迎通过 [Issues](https://github.com/E799B0307/tieba-channel-extension/issues) 反馈问题，或 Fork 后提交 Pull Request。直接维护者由仓库所有者邀请。参见 [贡献说明](CONTRIBUTING.md) 和 [来源说明](THIRD_PARTY_NOTICES.md)。

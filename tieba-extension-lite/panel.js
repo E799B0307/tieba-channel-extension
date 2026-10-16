@@ -4,6 +4,7 @@ import { loadRemoteImage, cancelRemoteImage, clearRemoteImages } from "./media.j
 import { reactionChoices } from "./reactions.js";
 import { imageUpload, isDisplayableMessage, canRecallMessage } from "./protocol.js";
 import { BUILD, OPERATIONS } from "./runtime-info.js";
+import { loadSettings, loadEnabled } from "./storage.js";
 
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((element) => [element.id, element]));
 const messages = new Map();
@@ -82,8 +83,6 @@ function controls() {
   elements["image-toggle"].disabled = elements.text.disabled || imageReading || !runtimeReady;
   elements["sticker-upload"].disabled = elements["image-toggle"].disabled;
   elements["image-cancel"].disabled = sending;
-  elements["send-diagnostics"].disabled = !room || busy || sending || !runtimeReady;
-  elements["bot-add-room"].disabled = !room || busy || sending || !runtimeReady || forum?.name !== "嘉然";
   if (elements.text.disabled) { toggleEmoji(false); toggleAt(false); toggleStickers(false); }
   elements.send.disabled = !room || busy || sending || imageReading || !runtimeReady || (!pendingImage && !elements.text.value.trim());
   elements.send.textContent = sending ? "发送中…" : "发送";
@@ -554,6 +553,10 @@ function resetRoom() {
   elements.latest.hidden = true;
   elements["room-title"].textContent = "一起聊聊吧";
   elements.status.textContent = "尚未进入频道";
+  elements["add-bot"].hidden = true;
+  elements["add-bot"].dataset.added = "";
+  elements["add-bot"].dataset.enabled = "";
+  elements["add-bot"].textContent = "添加到机器人";
   controls();
 }
 
@@ -622,6 +625,26 @@ async function enterRoom(roomId, fid) {
     elements.text.value = drafts.get(`${account.id}:${room.room}`) || "";
     resizeInput();
     elements.rooms.value = data.room;
+    // 查询该频道是否已加入机器人监控 + 机器人是否真正启用，同步按钮状态
+    const botButton = elements["add-bot"];
+    try {
+      const [settings, enabled] = await Promise.all([loadSettings(), loadEnabled()]);
+      const added = (settings.rooms || []).some((entry) => String(entry.roomId) === String(data.room));
+      const botConfigured = enabled && !!settings.botName;
+      botButton.dataset.added = added ? "1" : "";
+      botButton.dataset.enabled = botConfigured ? "1" : "";
+      if (added && botConfigured) {
+        botButton.textContent = "✓ 机器人已监控此频道";
+        botButton.title = `机器人「${settings.botName}」正在监控此频道，点击打开机器人设置`;
+      } else if (added && !botConfigured) {
+        botButton.textContent = "⚠ 已监控，机器人未启用";
+        botButton.title = "此频道已在监控列表，但机器人总开关未开或未设置昵称，点击打开设置";
+      } else {
+        botButton.textContent = "添加到机器人";
+        botButton.title = "把当前频道加入机器人监控（机器人配置在 ⚙ 设置 里）";
+      }
+    } catch { /* 状态查询失败不影响进入频道 */ }
+    botButton.hidden = false;
     await poll();
     if (currentVersion === version && data.permissionError) showError(new Error("未能读取频道管理权限，请重新选择频道后再使用管理撤回"));
   } catch (error) {
@@ -882,7 +905,7 @@ function watchConfirmation(identifier, currentVersion) {
       return;
     }
     confirmations.delete(identifier);
-    showError(new Error("收到发送回执，但未确认消息送达。请下载发送诊断，避免重复发送"));
+    showError(new Error("服务器已受理，但暂未在频道中确认这条消息。请先核对频道消息，避免重复发送"));
   };
   clearTimeout(confirmations.get(identifier));
   confirmations.set(identifier, setTimeout(check, 30000));
@@ -938,32 +961,87 @@ elements.rooms.addEventListener("change", () => {
   else resetRoom();
 });
 elements.reconnect.addEventListener("click", initialize);
-elements["bot-settings"].addEventListener("click", () => chrome.runtime.openOptionsPage().catch(showError));
-elements["bot-add-room"].addEventListener("click", async () => {
-  if (!room) return;
-  elements["bot-add-room"].disabled = true;
-  try {
-    await api("bot-add-room", { room: room.room });
-    await chrome.runtime.openOptionsPage();
-  } catch (error) { showError(error); }
-  finally { controls(); }
+elements["open-settings"].addEventListener("click", () => chrome.runtime.openOptionsPage());
+
+/* ========== 机器人活动日志 ========== */
+
+async function renderBotLog() {
+  const stored = await chrome.storage.local.get("botActivityLog");
+  const entries = Array.isArray(stored.botActivityLog) ? stored.botActivityLog.slice(-80).reverse() : [];
+  const list = elements["bot-log-list"];
+  list.replaceChildren(...entries.map((entry) => {
+    const item = document.createElement("div");
+    item.className = `bot-entry${entry.level === "info" ? "" : ` ${entry.level}`}`;
+    const time = document.createElement("span");
+    time.className = "bot-time";
+    time.textContent = entry.time;
+    item.append(time, document.createTextNode(`${entry.room ? `[房间${entry.room}] ` : ""}${entry.text}`));
+    return item;
+  }));
+}
+
+elements["bot-toggle"].addEventListener("click", async () => {
+  const panel = elements["bot-log"];
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) await renderBotLog();
 });
-elements["send-diagnostics"].addEventListener("click", async () => {
-  const currentVersion = version;
+
+elements["bot-log-clear"].addEventListener("click", async () => {
+  await chrome.storage.local.remove("botActivityLog");
+  await renderBotLog();
+});
+
+// 日志展开时每次机器人活动后自动刷新（storage 变化驱动）
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.botActivityLog && !elements["bot-log"].hidden) renderBotLog();
+});
+
+elements["add-bot"].addEventListener("click", async () => {
+  if (!room || !account) return;
+  const button = elements["add-bot"];
+  // 已加入过：按钮变成设置入口，直接打开设置页
+  if (button.dataset.added === "1") {
+    chrome.runtime.openOptionsPage();
+    return;
+  }
+  // 加入前检查机器人是否真正启用（总开关 + 昵称）
+  let enabled = false, botName = "";
   try {
-    const diagnostics = await api("send-diagnostics", { room: room.room });
-    if (currentVersion !== version) return;
-    const blob = new Blob([JSON.stringify({ build: BUILD, ...diagnostics }, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "tieba-send-diagnostics.json";
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const [settings, isOn] = await Promise.all([loadSettings(), loadEnabled()]);
+    enabled = isOn && !!settings.botName;
+    botName = settings.botName;
+  } catch { /* 查询失败按未启用处理 */ }
+  if (!enabled) {
+    if (window.confirm("机器人尚未启用（总开关未开或未设置昵称）。\n\n仍要先把此频道加入监控列表吗？\n（加入后还需到 ⚙ 设置 里开启机器人并设置昵称才会生效）")) {
+      // 仍加入，但明确告知后续步骤
+    } else {
+      chrome.runtime.openOptionsPage();
+      return;
+    }
+  }
+  button.disabled = true;
+  button.textContent = "添加中…";
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "add-room", accountId: account.id, room: room.room, name: room.name, fid: room.fid || "" });
+    if (!result?.ok) throw new Error(result?.error || "添加失败");
+    button.dataset.added = "1";
+    if (enabled) {
+      button.dataset.enabled = "1";
+      button.textContent = "✓ 机器人已监控此频道";
+      button.title = `机器人「${botName}」正在监控此频道，点击打开机器人设置`;
+      showNotice(`已把「${room.name}」加入机器人监控，机器人「${botName}」将在此频道响应命令`);
+    } else {
+      button.dataset.enabled = "";
+      button.textContent = "⚠ 已监控，机器人未启用";
+      button.title = "此频道已在监控列表，但机器人总开关未开或未设置昵称，点击打开设置";
+      showNotice(`已把「${room.name}」加入监控列表，但机器人还未启用——请到 ⚙ 设置 开启总开关并填写昵称`);
+    }
   } catch (error) {
-    if (currentVersion === version) showError(error);
+    button.textContent = "添加到机器人";
+    showError(error);
+  } finally {
+    button.disabled = false;
+    controls();
   }
 });
 elements["reload-extension"].addEventListener("click", () => {

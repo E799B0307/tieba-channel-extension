@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>贴吧频道聊天室</title>
+  <link rel="stylesheet" href="panel.css">
+  <script type="module" src="panel.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>贴吧频道</h1>
+    <span id="account" class="sr-only" role="status">正在连接贴吧…</span>
+    <button id="reconnect" class="quiet" type="button">重新连接</button>
+  </header>
+  <section class="picker" aria-label="选择贴吧和频道">
+    <form id="forum-form" class="picker-row">
+      <label for="forum">贴吧名称</label>
+      <input id="forum" placeholder="输入吧名" maxlength="100" required autocomplete="off"><button id="find" type="submit">查找</button>
+    </form>
+    <div class="picker-row"><label for="rooms">吧频道</label><select id="rooms" disabled><option value="">先选择一个贴吧</option></select></div>
+  </section>
+  <div id="notice" class="notice" role="alert" hidden></div>
+  <div id="runtime-warning" class="runtime-warning" role="alert" hidden><span id="runtime-message"></span><button id="reload-extension" type="button">重新加载插件</button></div>
+  <section class="conversation" aria-label="聊天消息">
+    <div class="room-heading"><strong id="room-title">一起聊聊吧</strong><span id="status" role="status">尚未进入频道</span></div>
+    <div id="messages" role="log" aria-label="频道消息" aria-live="polite" aria-relevant="additions text" tabindex="0"><div id="message-list"></div></div>
+    <div id="empty" class="empty"><div class="empty-symbol" aria-hidden="true">#</div><h2>你关注的话题，就在这里</h2><p>登录贴吧，选一个吧频道开始聊天。</p><a href="https://tieba.baidu.com/" target="_blank" rel="noopener noreferrer">打开贴吧登录 ↗</a></div>
+    <button id="latest" class="latest" type="button" hidden>回到最新消息 ↓</button>
+  </section>
+  <form id="compose" class="composer">
+    <div id="image-preview" class="image-preview" hidden><img id="preview-image" alt="待发送图片"><span id="image-name"></span><button id="image-cancel" type="button" aria-label="取消图片">×</button></div>
+    <input id="image-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+    <div id="sticker-picker" class="emoji-picker sticker-picker" role="dialog" aria-label="收藏表情" hidden>
+      <div class="sticker-heading"><strong><img src="icons/heart.svg" alt="" width="18" height="18">收藏表情</strong><button id="sticker-refresh" type="button" aria-label="刷新手机端收藏表情" title="刷新手机端收藏表情"><img src="icons/refresh-cw.svg" alt="" width="18" height="18"></button><button id="sticker-close" type="button" aria-label="关闭收藏表情" title="关闭收藏表情"><img src="icons/x.svg" alt="" width="18" height="18"></button></div>
+      <div id="sticker-list" class="sticker-list"></div>
+      <p id="sticker-status" class="sticker-status" role="status"></p>
+      <div class="sticker-footer"><button id="sticker-upload" class="quiet" type="button"><img src="icons/upload.svg" alt="" width="16" height="16">上传图片</button><button id="sticker-retry" class="quiet" type="button" hidden>重试</button></div>
+    </div>
+    <div id="reply-bar" class="reply-bar" hidden><span>↩ 回复 <strong id="reply-name"></strong>：<span id="reply-text"></span></span><button id="reply-cancel" type="button" aria-label="取消回复">×</button></div>
+    <div id="emoji-picker" class="emoji-picker" role="dialog" aria-label="选择表情" hidden>
+      <div class="emoji-heading"><label class="sr-only" for="emoji-search">搜索表情</label><input id="emoji-search" type="search" placeholder="搜索表情" autocomplete="off"><button id="emoji-close" type="button" aria-label="关闭表情选择器">×</button></div>
+      <div id="emoji-list" class="emoji-list"></div><p id="emoji-empty" hidden>没有找到这个表情</p>
+    </div>
+    <div id="at-picker" class="emoji-picker" role="dialog" aria-label="选择要 @ 的成员" hidden>
+      <div class="emoji-heading"><label class="sr-only" for="at-search">搜索成员</label><input id="at-search" type="search" placeholder="搜索频道成员" autocomplete="off"><button id="at-close" type="button" aria-label="关闭成员选择器">×</button></div>
+      <div id="at-list" class="at-list"></div><p id="at-empty" hidden>没有找到这个成员（仅能 @ 已在本频道发言的用户）</p>
+    </div>
+    <div id="reaction-picker" class="emoji-picker" role="dialog" aria-label="给消息贴表情" hidden>
+      <div class="emoji-heading"><input id="reaction-search" type="search" placeholder="搜索表情" aria-label="搜索要贴的表情"><button id="reaction-close" type="button" aria-label="关闭贴表情">×</button></div>
+      <div id="reaction-list" class="emoji-list"></div>
+    </div>
+    <div id="reaction-detail" class="emoji-picker" role="dialog" aria-label="贴表情的人" hidden>
+      <div class="emoji-heading"><strong>贴表情的人</strong><button id="detail-close" type="button" aria-label="关闭名单">×</button></div>
+      <div id="reaction-users" class="reaction-users" role="status"></div><p id="detail-status"></p>
+      <button id="detail-more" class="quiet" type="button" hidden>加载更多</button>
+    </div>
+    <button id="at-toggle" class="emoji-toggle" type="button" aria-label="提及成员" title="提及成员" aria-controls="at-picker" aria-expanded="false" disabled>@</button>
+    <button id="emoji-toggle" class="emoji-toggle" type="button" aria-label="选择表情" title="选择表情" aria-controls="emoji-picker" aria-expanded="false" disabled>☺</button>
+    <button id="image-toggle" class="emoji-toggle" type="button" aria-label="收藏表情与图片" title="收藏表情与图片" aria-controls="sticker-picker" aria-expanded="false" disabled><img src="icons/image.svg" alt="" width="20" height="20"></button>
+    <label class="sr-only" for="text">消息内容</label>
+    <textarea id="text" rows="1" maxlength="2000" placeholder="进入频道后开始聊天…" title="Enter 发送，Shift + Enter 换行" disabled></textarea>
+    <button id="send" type="submit" disabled>发送</button>
+  </form>
+  <footer><span id="runtime-version"></span><span>·</span>非官方贴吧客户端 <span>·</span> <a href="privacy.html" target="_blank" rel="noopener">隐私说明</a></footer>
+</body>
+</html>

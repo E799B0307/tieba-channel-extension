@@ -1,0 +1,13 @@
+{
+  "name": "tieba-bot-proxy",
+  "version": "0.1.0",
+  "description": "本地 TCP+TLS 转发代理：把浏览器扩展的 WebSocket 字节流转发到贴吧 BLCP 服务器",
+  "main": "proxy.js",
+  "scripts": {
+    "start": "node proxy.js"
+  },
+  "private": true,
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.23.0"
+  }
+}

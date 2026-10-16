@@ -2,7 +2,6 @@ import { md5, signed, parseJSON, positiveId, parseMessage, parseReactions, parse
 import { isCatalogReaction } from "./reactions.js";
 import { BLCPClient, CHAT_SDK_VERSION as BLCP_SDK_VERSION, CHAT_VERSION as BLCP_CHAT_VERSION } from "./blcp.js";
 import { cuidGalaxy2, c3Aid } from "./crypto.js";
-import { summarizeReply } from "./send-diagnostics.js";
 
 const APP_VERSION = "22.12.1.0";
 const SDK_VERSION = 11220030;
@@ -16,7 +15,7 @@ async function request(url, options = {}, operation = "连接贴吧") {
   let response;
   let body;
   try {
-    response = await fetch(url, { ...options, credentials: options.credentials ?? "include", cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(15000) });
+    response = await fetch(url, { ...options, credentials: "include", cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(15000) });
     body = await response.text();
   } catch (error) {
     const timedOut = error.name === "TimeoutError" || error.name === "AbortError";
@@ -48,8 +47,6 @@ export class TiebaClient {
     this.reactionCache = new Map();
     this.reactionGeneration = 0;
     this.historyCache = new Map();
-    this.messageReads = new Map();
-    this.lastHttpSend = null;
     this.stickerCache = null;
     this.blcp = null;          // BLCPClient 单例（懒连接）
     this.blcpAccount = null;   // BLCP 已登录对应的 token
@@ -63,8 +60,6 @@ export class TiebaClient {
     this.reactionCache.clear();
     this.reactionGeneration += 1;
     this.historyCache.clear();
-    this.messageReads.clear();
-    this.lastHttpSend = null;
     this.stickerCache = null;
     // 账号变化时断开 BLCP，下次按新账号重连
     if (this.blcp) { try { this.blcp.close(); } catch {} this.blcp = null; }
@@ -202,9 +197,9 @@ export class TiebaClient {
     return this.deviceTask;
   }
 
-  async app(path, fields, operation, credentials = "include") {
+  async app(path, fields, operation) {
     return request(`https://tiebac.baidu.com${path}`, {
-      method: "POST", body: new URLSearchParams(signed(fields, "tiebaclient!!!")), credentials,
+      method: "POST", body: new URLSearchParams(signed(fields, "tiebaclient!!!")),
     }, operation);
   }
 
@@ -277,11 +272,11 @@ export class TiebaClient {
   async loginWithToken(token) {
     if (!token || typeof token !== "string") throw accountError("机器人账号 BDUSS 为空");
     const generation = this.accountGeneration;
-    const data = await this.app("/c/s/login", { bdusstoken: token, _client_version: APP_VERSION }, "验证机器人账号", "omit");
+    const data = await this.app("/c/s/login", { bdusstoken: token, _client_version: APP_VERSION }, "验证机器人账号");
     if (!data.user?.id) throw accountError("机器人账号 BDUSS 已失效，请重新填写");
     const profile = await this.app("/c/u/user/profile", {
       BDUSS: token, _client_version: APP_VERSION, _client_type: 2, uid: String(data.user.id), need_post_count: 1, pn: 1,
-    }, "读取机器人账号资料", "omit");
+    }, "读取机器人账号资料");
     const user = profile.user;
     if (!user?.id || String(user.id) !== String(data.user.id)) throw accountError("机器人账号资料与登录身份不一致");
     const growthLevel = user.user_growth?.level_id;
@@ -312,7 +307,7 @@ export class TiebaClient {
       id: positiveId(room.room_id), name: String(room.room_info?.name || room.room_id),
     }));
     const rooms = [...new Map(listed.map((room) => [room.id, room])).values()];
-    await chrome.storage.session.set({ [`forum:${fid}`]: { accountId: account.id, name: String(resolved.forum.name || name), rooms } });
+    await chrome.storage.session.set({ [`forum:${fid}`]: { accountId: account.id, rooms } });
     await chrome.storage.local.set({ lastForum: { accountId: account.id, name } });
     await this.verifyAccount(account, expectedId);
     return { fid, name, rooms };
@@ -414,37 +409,9 @@ export class TiebaClient {
     return this.historyCache.get(key);
   }
 
-  async sendDiagnostics(roomId, expectedId) {
-    const { state, account } = await this.roomState(roomId, expectedId);
-    const client = this.blcpAccount === account.token ? this.blcp : null;
-    const history = this.historyCache.get(`${account.id}:${state.room}`);
-    const read = this.messageReads.get(`${account.id}:${state.room}`);
-    return {
-      generatedAt: Date.now(),
-      sendTransport: "https-imsapi",
-      versions: { httpApp: APP_VERSION, httpSdk: SDK_VERSION, imApp: BLCP_CHAT_VERSION, imSdk: BLCP_SDK_VERSION },
-      identityChecks: {
-        imAccountMatchesWeb: client ? String(client.user.bdUid) === account.id : null,
-      },
-      httpSendReply: this.lastHttpSend?.accountId === account.id ? structuredClone(this.lastHttpSend.reply) : null,
-      connection: { status: client?.status ?? -1, role: client?.user.role ?? null, joined: !!client?.joinedRooms?.has(state.room) },
-      replies: structuredClone(client?.diagnostics || []),
-      lastHistoryRead: read ? { at: read.at, count: read.ids.size } : null,
-      deliveryChecks: Object.keys(state.sentKeys || {}).slice(-5).map((id) => ({
-        msgid: id, seenInCache: !!history?.has(id), seenInLastHistoryRead: read ? read.ids.has(id) : null,
-      })),
-    };
-  }
-
   async messages(roomId, expectedId, after = "0") {
     if (typeof after !== "string" || !/^\d{1,20}$/.test(after)) throw new Error("消息游标无效，请重新选择频道");
     const { state, account } = await this.roomState(roomId, expectedId);
-    return this.readMessages(state, account, after);
-  }
-
-  async readMessages(state, account, after = "0") {
-    const expectedId = account.id;
-    await this.verifyAccount(account, expectedId);
     const history = this.history(state, account);
     const data = await this.im("fetch_mcast_msg_client", {
       mcast_id: Number(state.room), msgid_begin: 0, msgid_end: "9223372036854775807", count: history.size ? -40 : -80,
@@ -454,9 +421,6 @@ export class TiebaClient {
     await this.verifyAccount(account, expectedId);
     const incoming = (data.messages || []).map(parseMessage).filter((message) => /^\d+$/.test(message.id) && (!message.room || message.room === state.room));
     const incomingIds = new Set(incoming.map((message) => message.id));
-    const readKey = `${account.id}:${state.room}`;
-    this.messageReads.set(readKey, { at: Date.now(), ids: incomingIds });
-    if (this.messageReads.size > 6) this.messageReads.delete(this.messageReads.keys().next().value);
     for (const message of incoming) {
       const previous = history.get(message.id);
       if (!message.key && message.authorId === state.authorId) message.key = state.sentKeys?.[message.id] || "";
@@ -697,9 +661,16 @@ export class TiebaClient {
     const portrait = account.portrait ? `${account.portrait}?t=${Math.floor(Date.now() / 1000)}` : "";
     await this.verifyAccount(account, expectedId);
 
+    // 真实客户端协议：BLCP WebSocket service3/method185（REST 端点已被服务端静默丢弃）
+    const blcp = await this.getBlcp(account);
+    // 发送前置：必须已 join 房间（SW 休眠重启后 joinedRooms 丢失会在这里补 join）
+    if (!blcp.joinedRooms) blcp.joinedRooms = new Set();
+    if (!blcp.joinedRooms.has(state.room)) {
+      await blcp.joinChatRoom(Number(state.room));
+      blcp.joinedRooms.add(state.room);
+    }
     const body = picture?.url ? { url: picture.url, thumbnail: picture.thumbnail }
-      : picture ? await this.uploadImage(account, await this.getBlcp(account), picture, expectedId) : { text: text.trim() };
-    const deviceId = await this.device();
+      : picture ? await this.uploadImage(account, blcp, picture, expectedId) : { text: text.trim() };
     const content = JSON.stringify({ text: JSON.stringify({
       room_id: state.room, type: "0", to_uid: "0", vip: String(Number(account.vip)), name: account.name,
       portrait, content_type: picture ? "1" : "0", content_body: JSON.stringify(body),
@@ -708,19 +679,47 @@ export class TiebaClient {
       ext: JSON.stringify(messageMetadata(account, state, Number(levelData.user_level), portrait, picture?.metadata, picture ? 2 : 1)),
     }) });
     await this.verifyAccount(account, expectedId);
-    // Restore the original 0.1.x send path; a BLCP receipt alone did not reach channel members.
-    const data = await request("https://pim.baidu.com/imsapi/1.0/send_mcast_msg/liveshowuser", {
-      method: "POST",
-      body: new URLSearchParams(signed({ appid: APP_ID, app_version: APP_VERSION, sdk_version: SDK_VERSION,
-        timestamp: Math.floor(Date.now() / 1000), cuid: deviceId, device_type: "iOS",
-        mcast_id: state.room, msg_type: 81, msg_key: key, content })),
-    }, "发送消息");
+    // origin_id 用 BLCP 登录响应里的 trigger_id（aiotieba 语义：self._user.trigger_id 由
+    // BLCP login 填充）；HTTP 登录的 trigger_id 与其可能不同
+    const originId = Number(blcp.user.triggerId) > 0 ? blcp.user.triggerId : Number(account.originId);
+    const requestData = {
+      method: 185,
+      mcast_id: Number(state.room),    // 必须是数字——字符串会报 "mcast_id error"(err_code=5)
+      role: 3,
+      token: account.token,            // BDUSS
+      appid: APP_ID,
+      uk: blcp.user.uk,
+      origin_id: originId,     // trigger_id
+      type: 81,
+      app_safe_ext: JSON.stringify({ haotianjing: { zid: "" } }),
+      content,
+      msg_key: key,
+      account_type: 1,
+      sdk_version: BLCP_SDK_VERSION,
+      event_list: [
+        { event: "CClickSendBegin", timestamp_ms: 0 },
+        { event: "CSendBegin", timestamp_ms: 0 },
+        { event: "CIMSendBegin", timestamp_ms: Math.floor(Date.now()) },
+      ],
+    };
+    const messageId = await blcp.sendMethod185(requestData).catch((error) => {
+      // 发送失败：把关键参数打到 console，方便与 aiotieba 对比定位 err_code=5
+      console.error("[tieba] 发送失败详情:", error.message);
+      console.error("[tieba] 发送参数:", JSON.stringify({
+        uk: blcp.user.uk,
+        origin_id: originId,
+        msg_key: key,
+        authorId: state.authorId,
+        triggerId_blcp: blcp.user.triggerId,
+        triggerId_http: account.originId,
+        bdUid: blcp.user.bdUid,
+        mcast_id: state.room,
+        sdk_version: BLCP_SDK_VERSION,
+      }));
+      throw error;
+    });
     await this.verifyAccount(account, expectedId);
-    this.lastHttpSend = { accountId: account.id, reply: summarizeReply(null, null, { lcm: { kind: "json", data } }) };
-    const messageId = data.response_params?.msgid;
-    if (typeof messageId === "number" && !Number.isSafeInteger(messageId) || !/^[1-9]\d{0,19}$/.test(String(messageId ?? ""))) {
-      throw new Error("发送结果未确认，请先查看频道，避免重复发送");
-    }
+    if (!messageId || String(messageId) === "0") throw new Error("贴吧未确认发送成功，请刷新消息列表后再决定是否重试");
     const current = (await chrome.storage.session.get(`room:${state.room}`))[`room:${state.room}`];
     await this.verifyAccount(account, expectedId);
     if (current?.accountId === account.id) {
@@ -774,7 +773,7 @@ export class TiebaClient {
     const requestData = {
       method: 185,
       mcast_id: Number(room),
-      role: blcp.user.role ?? 3,
+      role: 3,
       token: botAccount.token,
       appid: APP_ID,
       uk: blcp.user.uk,
@@ -804,43 +803,12 @@ export class TiebaClient {
     return { id: String(messageId), room };
   }
 
-  async recallAsBot(botAccount, state, message, beforeWithdraw) {
-    const room = positiveId(state.room);
-    const fid = positiveId(state.fid);
-    if (!botAccount?.token || !/^[0-9a-f]{16,64}$/i.test(botAccount.tbs || "")) {
-      throw accountError("机器人登录校验已失效");
-    }
-    if (message?.room !== room || !/^[1-9]\d{0,19}$/.test(message.id || "")
-      || typeof message.key !== "string" || !message.key || message.key.length > 512
-      || message.system || message.hidden || message.removed || message.recalled || message.deleted?.length) {
-      throw new Error("自动撤回目标无效");
-    }
-    const authorId = await userIdFromAuthorId(message.authorId);
-    if (authorId === botAccount.id) throw new Error("不自动撤回机器人自己的消息");
-    const result = await this.app("/c/f/chat/getChatRoomDetail", {
-      BDUSS: botAccount.token, _client_version: APP_VERSION, chatroom_id: room, last_msg_id: "0", last_time: "0",
-    }, "读取机器人频道权限", "omit");
-    const detail = result.data;
-    const role = detail?.user_info?.identity_role;
-    if (String(detail?.basic_info?.id) !== room || String(detail?.basic_info?.forum_id) !== fid
-      || !/^[1-3]$/.test(String(role))
-      || !canRecallMessage({ authorId: "", identityRole: Number(role) }, message)) {
-      throw Object.assign(new Error("机器人没有撤回该消息的频道管理权限"), { code: "RECALL_FORBIDDEN" });
-    }
-    // Re-check the switch and account after permission lookup, immediately before the write.
-    await beforeWithdraw();
-    await this.app("/c/c/chatroom/withdrawMsg", {
-      BDUSS: botAccount.token, _client_version: APP_VERSION, tbs: botAccount.tbs,
-      msg_type: message.msgType || "0", uid_to: authorId, chatroom_id: room,
-      msg_id: message.id, msg_key: message.key, forum_id: fid,
-    }, "机器人撤回消息", "omit");
-    return { room, id: message.id };
-  }
-
   async recall(roomId, expectedId, id) {
     const { state, account } = await this.roomState(roomId, expectedId);
     let target = this.messageTarget(state, account, id);
-    const own = !!target.authorId && target.authorId === state.authorId;
+    // 撤回本人：baidu_uk（authorId）或数字 user_id（from）任一匹配
+    const own = (!!target.authorId && target.authorId === state.authorId)
+      || (!!target.from && String(target.from) === String(account.id));
     if (!own) {
       const permissions = await this.roomPermissions(state, account, expectedId);
       target = this.messageTarget(state, account, id);
@@ -860,5 +828,31 @@ export class TiebaClient {
     }, "撤回消息");
     await this.verifyAccount(account, expectedId);
     return { room: state.room, id };
+  }
+
+  /**
+   * 机器人账号撤回一条消息（基于关键词检测的自动撤回用）。
+   *
+   * 直接用 bot 账号（loginWithToken 结果）构造 withdrawMsg 请求，不依赖
+   * historyCache——机器人走 BLCP 实时推送，历史缓存里可能没有 msg_key。
+   *
+   * @param {object} botAccount loginWithToken() 返回（需含 token/tbs/id）
+   * @param {object} state      { room, fid } 房间上下文（fid 来自 settings.rooms）
+   * @param {object} message    parseMessage 输出（需含 id/key/msgType/from/authorId）
+   */
+  async recallAsBot(botAccount, state, message) {
+    if (!botAccount?.token) throw accountError("机器人账号未登录，请先在设置页填写 BDUSS");
+    if (!message?.id || !message?.key) throw new Error("这条消息缺少撤回标识（msg_key），无法撤回");
+    if (!/^[0-9a-f]{16,64}$/i.test(botAccount.tbs || "")) throw new Error("机器人账号登录校验码（tbs）不可用，请重新填写 BDUSS");
+    const room = positiveId(state.room);
+    const fid = positiveId(state.fid);
+    // 撤回别人：uid_to = 从消息作者 baidu_uk 反解出的数字 user_id
+    const authorId = await userIdFromAuthorId(message.authorId);
+    await this.app("/c/c/chatroom/withdrawMsg", {
+      BDUSS: botAccount.token, _client_version: APP_VERSION, tbs: botAccount.tbs,
+      msg_type: message.msgType || "0", uid_to: authorId, chatroom_id: room,
+      msg_id: message.id, msg_key: message.key, forum_id: fid,
+    }, "机器人撤回消息");
+    return { room, id: message.id };
   }
 }

@@ -5,7 +5,7 @@
 ## 提交流程
 
 1. Fork 本仓库，从 `main` 建立自己的分支。
-2. 修改 `tieba-extension-lite`，为协议、权限和界面行为补上对应测试。
+2. 修改 `tieba-extension-lite`（目前为完整机器人版），按改动风险补充测试。原项目测试位于该目录的 `test/` 和 `diag.mjs`，仓库检查入口位于根目录 `tests/`。
 3. 运行 `npm ci`、`npm test`，安装 Playwright Chromium 后运行 `npm run test:ui`。
 4. 提交 PR 到 `main`，写明问题、修改方式、测试结果，以及是否真实账号实测。
 
@@ -24,6 +24,6 @@
 
 有新操作或发布版本时同步修改 `manifest.json`、`runtime-info.js`、根目录 `package.json`、测试版本断言和文档。保留侧栏与后台的版本握手，防止旧后台处理新操作。
 
-协议测试使用 Node 内置测试器。界面测试使用 Playwright 和隔离浏览器，模拟 Chrome 扩展 API 及贴吧响应，不需要开发者账号。自动测试通过不等于贴吧线上接口已实测。
+仓库检查通过 Node 内置测试器调用原项目检查脚本，将 `console.assert` 失败转为测试失败。界面测试使用 Playwright 和隔离浏览器，模拟 Chrome 扩展 API 及贴吧响应，不需要开发者账号。自动测试通过不等于贴吧线上接口已实测。
 
 发布时上传扩展安装包及 SHA-256 校验文件，二进制不放入 Git 历史。保留原作者、第三方许可证和隐私说明。

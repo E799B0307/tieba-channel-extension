@@ -79,7 +79,10 @@ export async function userIdFromAuthorId(authorId) {
 
 export function canRecallMessage(room, message) {
   if (!room || !message?.authorId || message.hidden || message.removed || message.recalled) return false;
+  // 撤回本人：baidu_uk（authorId）或数字 user_id（from）任一匹配即可
   if (message.authorId === room.authorId) return true;
+  if (room.accountId && message.from && String(message.from) === String(room.accountId)) return true;
+  // 管理员撤回别人：按 identity_role 等级判断
   const actor = Number(room.identityRole);
   const target = Number(message.role ?? 0);
   if (actor === 1) return [0, 1, 2, 4, 64].includes(target);

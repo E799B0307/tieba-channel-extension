@@ -11,11 +11,9 @@
   <header class="topbar">
     <h1>贴吧频道</h1>
     <span id="account" class="sr-only" role="status">正在连接贴吧…</span>
-    <div class="topbar-actions">
-      <button id="bot-settings" class="quiet icon-button" type="button" title="嘉然吧自动撤回设置" aria-label="嘉然吧自动撤回设置"><img src="icons/settings.svg" alt=""></button>
-      <button id="send-diagnostics" class="quiet icon-button" type="button" title="下载发送诊断" aria-label="下载发送诊断" disabled><img src="icons/file-down.svg" alt=""></button>
-      <button id="reconnect" class="quiet" type="button">重新连接</button>
-    </div>
+    <button id="open-settings" class="quiet" type="button" title="机器人设置">⚙ 设置</button>
+    <button id="bot-toggle" class="quiet" type="button" title="机器人活动日志">🤖 日志</button>
+    <button id="reconnect" class="quiet" type="button">重新连接</button>
   </header>
   <section class="picker" aria-label="选择贴吧和频道">
     <form id="forum-form" class="picker-row">
@@ -26,8 +24,12 @@
   </section>
   <div id="notice" class="notice" role="alert" hidden></div>
   <div id="runtime-warning" class="runtime-warning" role="alert" hidden><span id="runtime-message"></span><button id="reload-extension" type="button">重新加载插件</button></div>
+  <div id="bot-log" class="bot-log" hidden>
+    <div class="bot-log-heading"><strong>机器人活动</strong><button id="bot-log-clear" class="quiet" type="button">清空</button></div>
+    <div id="bot-log-list" class="bot-log-list"></div>
+  </div>
   <section class="conversation" aria-label="聊天消息">
-    <div class="room-heading"><strong id="room-title">一起聊聊吧</strong><span id="status" role="status">尚未进入频道</span><button id="bot-add-room" class="quiet icon-button" type="button" title="添加到嘉然吧自动撤回" aria-label="添加到嘉然吧自动撤回" disabled><img src="icons/plus.svg" alt=""></button></div>
+    <div class="room-heading"><strong id="room-title">一起聊聊吧</strong><span id="status" role="status">尚未进入频道</span><button id="add-bot" class="quiet" type="button" title="把当前频道加入机器人监控（机器人配置在 ⚙ 设置 里）" hidden>添加到机器人</button></div>
     <div id="messages" role="log" aria-label="频道消息" aria-live="polite" aria-relevant="additions text" tabindex="0"><div id="message-list"></div></div>
     <div id="empty" class="empty"><div class="empty-symbol" aria-hidden="true">#</div><h2>你关注的话题，就在这里</h2><p>登录贴吧，选一个吧频道开始聊天。</p><a href="https://tieba.baidu.com/" target="_blank" rel="noopener noreferrer">打开贴吧登录 ↗</a></div>
     <button id="latest" class="latest" type="button" hidden>回到最新消息 ↓</button>
