@@ -419,6 +419,7 @@ export class TiebaClient {
     }, "读取频道消息");
     await this.verifyAccount(account, expectedId);
     const incoming = (data.messages || []).map(parseMessage).filter((message) => /^\d+$/.test(message.id) && (!message.room || message.room === state.room));
+    const incomingIds = new Set(incoming.map((message) => message.id));
     for (const message of incoming) {
       const previous = history.get(message.id);
       if (!message.key && message.authorId === state.authorId) message.key = state.sentKeys?.[message.id] || "";
@@ -443,7 +444,8 @@ export class TiebaClient {
     await this.verifyAccount(account, expectedId);
     return {
       room: state.room,
-      messages: ordered.filter((message) => BigInt(message.id) > BigInt(after)).slice(-300),
+      // Recent server messages may arrive after a newer cursor was already seen.
+      messages: ordered.filter((message) => BigInt(message.id) > BigInt(after) || incomingIds.has(message.id)).slice(-300),
       reacts: ordered.filter((message) => !message.hidden).slice(-80).map((message) => ({ id: message.id, reactions: message.reactions })),
       reactionError,
       reactionGeneration: this.reactionGeneration,

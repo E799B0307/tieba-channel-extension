@@ -5,6 +5,7 @@ const root = new URL('../tieba-extension-lite/', import.meta.url);
 const { parseMessage, parseReactions, parseReactionUsers, parseFavoriteStickers, imageUpload, parseJSON, isDisplayableMessage, canRecallMessage, userIdFromAuthorId, authorIdFromUserId } = await import(new URL('protocol.js', root));
 const { TiebaClient } = await import(new URL('tieba.js', root));
 const { BLCPClient } = await import(new URL('blcp.js', root));
+const { concatBytes, encodeBytesField, encodeVarintField, parseFields, findField } = await import(new URL('protobuf.js', root));
 const { reactionChoices } = await import(new URL('reactions.js', root));
 const image = reactionChoices[0].image;
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l1cAAAAASUVORK5CYII=';
@@ -310,6 +311,49 @@ test('BLCP reaction transport sends service 3 method 214 and checks errors', asy
   await assert.rejects(blcp.react({ method: 214 }), /未成功/);
 });
 
+test('BLCP acknowledgements and notifications preserve unquoted 64-bit message IDs', async () => {
+  const blcp = new BLCPClient({ bduss: 'test', cuidGalaxy2: 'device', c3Aid: '' });
+  blcp.status = 1;
+  blcp._write = async (frame) => {
+    const rpcLength = new DataView(frame.buffer, frame.byteOffset).getUint32(8, false);
+    const fields = parseFields(frame.slice(12, 12 + rpcLength));
+    const correlation = findField(fields, 4).value;
+    const response = concatBytes(encodeBytesField(2, concatBytes(encodeVarintField(1, 3), encodeVarintField(2, 185))), encodeVarintField(4, correlation));
+    const data = new TextEncoder().encode(`{"err_code":0,"response_params":{"msgid":${own}}}`);
+    blcp._handleFrame(concatBytes(response, data), response.length);
+  };
+  assert.equal(await blcp.sendMethod185({ method: 185 }), own);
+  let packet;
+  blcp.onMessage((value) => { packet = value; });
+  const notification = encodeBytesField(8, encodeVarintField(1, 3));
+  const data = new TextEncoder().encode(`{"messages":[{"msgid":${own},"from_user":321}]}`);
+  blcp._handleFrame(concatBytes(notification, data), notification.length);
+  assert.equal(packet.messages[0].msgid, own);
+  assert.equal(packet.messages[0].from_user, 321);
+});
+
+test('send acknowledgements reject server errors and unsafe IDs without retrying', async () => {
+  const blcp = new BLCPClient({ bduss: 'test', cuidGalaxy2: 'device', c3Aid: '' });
+  blcp.status = 1;
+  let calls = 0;
+  let response = { meta: { errorCode: 5 }, lcm: { kind: 'json', data: { msgid: own } } };
+  blcp._request = async () => { calls++; return response; };
+  await assert.rejects(blcp.sendMethod185({}), /发送失败/);
+  assert.equal(calls, 1);
+  response = { meta: { errorCode: 0 }, lcm: { kind: 'json', data: { err_code: 0, msgid: Number(own) } } };
+  await assert.rejects(blcp.sendMethod185({}), /确认/);
+  response = { meta: { errorCode: 0 }, lcm: { kind: 'json', data: { err_code: '0', msgid: 123 } } };
+  assert.equal(await blcp.sendMethod185({}), '123');
+});
+
+test('message polling returns late arrivals even when a newer cursor has already been seen', async () => {
+  const client = fixture();
+  client.im = async () => ({ messages: [raw(own, { type: '0', baidu_uk: 'self-uk', content_body: '{"text":"late own message"}' })] });
+  const result = await client.messages('123', '789', other);
+  assert.equal(result.messages.some((message) => message.id === own), true);
+  assert.equal(result.messages.find((message) => message.id === own).text, 'late own message');
+});
+
 test('reaction details resolve names and retain pagination cursor', async () => {
   const client = fixture();
   client.history(state, account).get(other).reactions = [{ image, content: image, count: 1 }];
@@ -415,7 +459,7 @@ test('background accepts only its own panel and serializes writes per message', 
     const sender = { id: 'test-id', url: 'chrome-extension://test-id/panel.html' };
     const info = await new Promise((resolve) => listener({ type: 'runtime-info' }, sender, resolve));
     assert.equal(info.ok, true);
-    assert.equal(info.data.build, '0.2.4-local');
+    assert.equal(info.data.build, '0.2.5-local');
     assert.ok(['send-image', 'send-sticker', 'favorite-stickers', 'react', 'recall'].every((operation) => info.data.operations.includes(operation)));
     assert.equal(listener(request, { id: 'test-id', url: 'https://tieba.baidu.com/' }, () => {}), false);
     assert.equal(listener(request, { id: 'other-extension', url: sender.url }, () => {}), false);

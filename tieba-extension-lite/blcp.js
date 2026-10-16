@@ -19,6 +19,7 @@ import {
   concatBytes, parseFields, findField, findFields, bytesToString,
 } from './protobuf.js';
 import { md5 as md5Pure } from './crypto.js';
+import { parseJSON } from './protocol.js';
 
 export const CHAT_APPID = 10773430;
 export const CHAT_SDK_VERSION = 11250036;
@@ -97,7 +98,7 @@ async function gunzip(bytes) {
 }
 
 function tryParseJson(bytes) {
-  try { return JSON.parse(new TextDecoder().decode(bytes)); }
+  try { return parseJSON(new TextDecoder().decode(bytes)); }
   catch { return null; }
 }
 
@@ -505,16 +506,19 @@ export class BLCPClient {
     const lcm = new TextEncoder().encode(JSON.stringify(requestData));
     const r = await this._request(3, 185, lcm, correlationId);
     const d = r.lcm.kind === 'json' ? r.lcm.data : null;
-    if (r.meta.errorText && r.meta.errorText !== 'success') {
+    if (Number(r.meta.errorCode || 0) !== 0 || r.meta.errorText && r.meta.errorText !== 'success') {
       throw new Error(`发送失败: err_code=${r.meta.errorCode} ${r.meta.errorText}`);
     }
-    if (d && d.err_code !== undefined && d.err_code !== 0) {
+    if (d && Number(d.err_code ?? d.error_code ?? 0) !== 0) {
       // 完整透出原始响应，便于定位 err_code=5 的确切含义
       const raw = JSON.stringify(d).slice(0, 500);
       throw new Error(`发送失败: err_code=${d.err_code} err_msg=${d.err_msg || d.errmsg || d.error_msg || "(空)"} | 原始响应: ${raw}`);
     }
-    // 服务端确认消息 id
-    return d?.response_params?.msgid ?? d?.msgid ?? null;
+    const id = d?.response_params?.msgid ?? d?.msgid;
+    if (typeof id === 'number' && !Number.isSafeInteger(id) || !/^[1-9]\d{0,19}$/.test(String(id ?? ''))) {
+      throw new Error('发送结果未确认，请先查看频道，避免重复发送');
+    }
+    return String(id);
   }
 
   async react(requestData) {

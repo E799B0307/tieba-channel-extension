@@ -13,6 +13,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   try {
+    await page.clock.install();
     await page.route('**/*', async (route) => {
       const url = new URL(route.request().url());
       if (url.hostname !== 'extension.test') {
@@ -44,7 +45,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
       ];
       const listeners = [];
       window.calls = [];
-      window.runtimeBuild = '0.2.4-local';
+      window.runtimeBuild = '0.2.5-local';
       window.identityRole = 0;
       window.reloads = 0;
       window.failNext = '';
@@ -53,6 +54,9 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
       window.emptyStickers = false;
       window.delayStickers = false;
       window.pendingStickers = null;
+      window.sendId = own;
+      window.delayedMessage = '';
+      window.failMessageReads = false;
       let generation = 0;
       window.push = (messages) => listeners.forEach((fn) => fn({ type: 'blcp-push', messages }, { id: 'test-extension', url: 'http://extension.test/background.js' }));
       window.chrome = { runtime: {
@@ -78,9 +82,14 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
               })), unavailable: 0 };
               if (window.delayStickers) return new Promise((resolve) => { window.pendingStickers = () => resolve({ ok: true, data }); });
               break;
-            case 'messages': data = { room: request.room,
+            case 'messages':
+              if (window.failMessageReads) return { ok: false, error: '模拟频道读取失败' };
+              data = { room: request.room,
               messages: request.room === '123' ? rows.filter((row) => BigInt(row.id) > BigInt(request.after)) : [],
-              reacts: rows.map((row) => ({ id: row.id, reactions: row.reactions })), reactionGeneration: generation }; break;
+              reacts: rows.map((row) => ({ id: row.id, reactions: row.reactions })), reactionGeneration: generation };
+              if (window.delayedMessage && request.room === '123') data.messages.push({ ...base,
+                id: window.sendId, name: '自己', authorId: 'self-uk', text: window.delayedMessage });
+              break;
             case 'react': {
               const row = rows.find((row) => row.id === request.id);
               row.reactions = request.add ? [{ image: request.image, count: 2, reacted: true }] : [{ image: request.image, count: 1, reacted: false }];
@@ -96,7 +105,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
             case 'send':
             case 'send-image':
             case 'send-sticker':
-              data = { room: request.room, id: own }; break;
+              data = { room: request.room, id: window.sendId }; break;
             default: return { ok: false, error: 'unexpected API: ' + request.type };
           }
           return { ok: true, data: structuredClone(data) };
@@ -316,5 +325,55 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
     await page.locator('#reload-extension').click();
     assert.equal(await page.evaluate(() => reloads), 1);
     console.log('PASS old-background detection, blocked writes, and explicit runtime reload');
+
+    const reloadForDelivery = async () => {
+      await page.reload();
+      await page.locator('#rooms option[value="123"]').waitFor({ state: 'attached' });
+      await page.locator('#rooms').selectOption('123');
+      await other.waitFor();
+      await page.evaluate(() => { window.sendId = '9007199254740993122'; });
+      await page.locator('#text').fill('发送确认测试');
+      await page.locator('#send').click();
+      await page.waitForFunction(() => !document.querySelector('#text').value);
+    };
+    const unconfirmed = page.locator('#notice').filter({ hasText: '服务器已受理，但暂未在频道中确认' });
+    await reloadForDelivery();
+    await page.clock.fastForward(9000);
+    assert.equal(await page.locator('#notice').isVisible(), false, 'slow delivery must not be treated as failure at eight seconds');
+    await page.evaluate(() => { window.delayedMessage = '迟到但确实送达的消息'; });
+    await page.clock.fastForward(4000);
+    const lateMessage = page.locator('[data-message-id="9007199254740993122"]');
+    await lateMessage.waitFor();
+    await page.clock.fastForward(31000);
+    assert.equal(await unconfirmed.isVisible(), false);
+    assert.equal(await lateMessage.count(), 1, 'overlapping message reads must not duplicate the message');
+    assert.equal(await page.evaluate(() => calls.filter(call => call.type === 'send').length), 1);
+
+    await reloadForDelivery();
+    await page.evaluate(() => { window.failMessageReads = true; });
+    await page.clock.fastForward(31000);
+    await page.getByText('模拟频道读取失败', { exact: true }).waitFor();
+    assert.equal(await unconfirmed.isVisible(), false, 'read failures cannot establish non-delivery');
+    await page.evaluate(() => { window.failMessageReads = false; window.delayedMessage = '断网恢复后确认的消息'; });
+    await page.clock.fastForward(4000);
+    await lateMessage.waitFor();
+    await page.clock.fastForward(31000);
+    assert.equal(await unconfirmed.isVisible(), false);
+    assert.equal(await page.evaluate(() => calls.filter(call => call.type === 'send').length), 1, 'recovery must not resend');
+
+    await reloadForDelivery();
+    await page.clock.fastForward(31000);
+    for (let tick = 0; tick < 6 && !await unconfirmed.isVisible(); tick++) await page.clock.runFor(1000);
+    await unconfirmed.waitFor();
+    assert.equal(await page.evaluate(() => calls.filter(call => call.type === 'send').length), 1);
+    assert.equal(await page.locator('#notice').textContent().then(text => /限频|审核|稍后可重试/.test(text)), false);
+    await page.screenshot({ path: path.join(output, 'delivery-unconfirmed-280.png') });
+
+    await reloadForDelivery();
+    await page.locator('#rooms').selectOption('124');
+    await page.clock.fastForward(35000);
+    assert.equal(await unconfirmed.isVisible(), false, 'old-room delivery timers must be cancelled');
+    assert.deepEqual(errors, []);
+    console.log('PASS delayed delivery, overlapping cursors, read recovery, uncertain receipts, no resend, and room isolation');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

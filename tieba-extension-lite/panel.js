@@ -871,13 +871,19 @@ function followLayout() {
 
 function watchConfirmation(identifier, currentVersion) {
   if (!identifier || messages.has(identifier)) return;
-  const timer = setTimeout(() => {
-    confirmations.delete(identifier);
-    if (currentVersion === version && !messages.has(identifier)) {
-      showError(new Error("消息可能未送达（服务器限频或审核时会静默丢弃），稍后可重试"));
+  const check = async () => {
+    if (currentVersion !== version || !confirmations.has(identifier)) return;
+    await poll();
+    if (currentVersion !== version || !confirmations.has(identifier)) return;
+    if (pollRequest || pollingError) {
+      confirmations.set(identifier, setTimeout(check, 4000));
+      return;
     }
-  }, 8000);
-  confirmations.set(identifier, timer);
+    confirmations.delete(identifier);
+    showError(new Error("服务器已受理，但暂未在频道中确认这条消息。请先核对频道消息，避免重复发送"));
+  };
+  clearTimeout(confirmations.get(identifier));
+  confirmations.set(identifier, setTimeout(check, 30000));
 }
 
 async function sendMessage() {
