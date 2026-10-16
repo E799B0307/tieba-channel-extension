@@ -21,9 +21,19 @@ function fixture() {
   const client = new TiebaClient();
   client.roomState = async () => ({ state, account });
   client.verifyAccount = async () => {};
+  client.device = async () => 'original-install-device|0';
   client.history(state, account).set(own, parseMessage(raw(own, { type: '0', name: 'tester', baidu_uk: 'self-uk', msg_key: 'own-key', content_body: JSON.stringify({ text: 'own message' }) })));
   client.history(state, account).set(other, parseMessage(raw(other, { type: '0', name: 'another', baidu_uk: 'other-uk', msg_key: 'other-key', content_body: JSON.stringify({ text: 'other message' }) })));
   return client;
+}
+
+function captureHttpSend(t, reply = '{"err_code":0,"response_params":{"msgid":"999"}}') {
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    requests.push({ url, options, fields: Object.fromEntries(options.body) });
+    return new Response(reply);
+  });
+  return requests;
 }
 
 test('hidden control packets, join notices and ordinary chat stay distinct', () => {
@@ -129,25 +139,24 @@ test('favorites never cache an old account response or turn API failures into an
   assert.equal(client.stickerCache, null);
 });
 
-test('favorite sending resolves the server catalog, preserves the original and performs no upload', async () => {
+test('favorite sending resolves the server catalog, preserves the original and performs no upload', async (t) => {
   const client = fixture();
   client.account = async () => account;
   client.app = async (url) => url.endsWith('getAllMeme') ? { data: { pic_ids: [favoriteRow] } } : { user_level: 12 };
-  let writes = 0;
-  let packet;
-  client.getBlcp = async () => ({ joinedRooms: new Set(['123']), user: { uk: 888, triggerId: 9, role: 7 },
-    sendMethod185: async (request) => { writes++; packet = request; return '999'; } });
+  const requests = captureHttpSend(t);
+  client.getBlcp = async () => { throw new Error('favorites must not depend on the BLCP sender'); };
   client.uploadImage = async () => { throw new Error('must not upload a favorite'); };
   globalThis.chrome = { storage: { session: { get: async () => ({ 'room:123': state }), set: async () => {} } } };
   await assert.rejects(client.send('123', '', '789', '', null, null, 'https://attacker.example/file'), /失效/);
-  assert.equal(writes, 0);
+  assert.equal(requests.length, 0);
   await client.send('123', '', '789', own, null, null, '42:9007199254740993123');
-  assert.equal(writes, 1);
+  assert.equal(requests.length, 1);
+  const packet = requests[0].fields;
   const content = JSON.parse(JSON.parse(packet.content).text);
   assert.equal(JSON.parse(content.content_body).url, favoriteRow.pic_url.replace('http:', 'https:'));
   assert.equal(content.content_type, '1');
-  assert.equal(packet.role, 7, 'send role must come from the authenticated IM session');
-  assert.equal(JSON.parse(content.ext).from, 'android');
+  assert.equal(packet.device_type, 'iOS');
+  assert.equal(JSON.parse(content.ext).from, 'ios');
   assert.equal(JSON.parse(content.ext).content.big_size, '100,50');
   assert.equal(content.re_data.re_msg_id, own);
 });
@@ -394,6 +403,67 @@ test('send acknowledgements reject server errors and unsafe IDs without retrying
   assert.equal(await blcp.sendMethod185({}), '123');
 });
 
+test('text restores the original signed HTTPS sender without BLCP or automatic fallback', async (t) => {
+  const client = fixture();
+  client.app = async () => ({ user_level: 12 });
+  const requests = captureHttpSend(t, '{"err_code":0,"response_params":{"msgid":9007199254740993123}}');
+  client.getBlcp = async () => { throw new Error('text must not need a local proxy or BLCP login'); };
+  globalThis.chrome = { storage: { session: { get: async () => ({ 'room:123': state }), set: async () => {} } } };
+  const result = await client.send('123', '一条普通文字', '789');
+  assert.equal(result.id, own, 'HTTPS replies must preserve 64-bit message IDs');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://pim.baidu.com/imsapi/1.0/send_mcast_msg/liveshowuser');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(requests[0].options.credentials, 'include');
+  const packet = requests[0].fields;
+  assert.equal(packet.cuid, 'original-install-device|0');
+  assert.equal(packet.device_type, 'iOS');
+  assert.equal(packet.app_version, '22.12.1.0');
+  assert.equal(packet.sdk_version, '11220030');
+  assert.equal(packet.msg_type, '81');
+  assert.equal(packet.mcast_id, state.room);
+  assert.match(packet.sign, /^[a-f0-9]{32}$/);
+  assert.equal(packet.token, undefined, 'use the existing HTTPS cookie, never copy it into the form');
+  const envelope = JSON.parse(packet.content);
+  assert.equal(typeof envelope.text, 'string');
+  const inner = JSON.parse(envelope.text);
+  assert.equal(inner.baidu_uk, state.authorId);
+  assert.equal(inner.room_id, state.room);
+  assert.equal(inner.content_type, '0');
+  assert.deepEqual(JSON.parse(inner.content_body), { text: '一条普通文字' });
+  assert.equal(JSON.parse(inner.ext).type, 1);
+  const diagnostics = await client.sendDiagnostics('123', '789');
+  assert.equal(diagnostics.sendTransport, 'https-imsapi');
+  assert.equal(diagnostics.httpSendReply.body.response_params.values.msgid, own);
+  assert.ok(!JSON.stringify(diagnostics).includes('一条普通文字'));
+});
+
+test('HTTPS send failures never retry via BLCP', async (t) => {
+  const client = fixture();
+  client.app = async () => ({ user_level: 12 });
+  const requests = captureHttpSend(t, '{"err_code":5,"err_msg":"rejected"}');
+  client.getBlcp = async () => { throw new Error('must not retry on another transport'); };
+  await assert.rejects(client.send('123', 'test', '789'), /rejected/);
+  assert.equal(requests.length, 1);
+});
+
+test('HTTP sender preserves its original installation identity across background restarts', async () => {
+  const stored = { deviceId: 'old-http-device|0' };
+  const originalChrome = globalThis.chrome;
+  const writes = [];
+  globalThis.chrome = { storage: { local: {
+    get: async (key) => ({ [key]: structuredClone(stored[key]) }),
+    set: async (value) => { writes.push(value); Object.assign(stored, value); },
+  } } };
+  try {
+    assert.equal(await new TiebaClient().device(), stored.deviceId);
+    assert.equal(await new TiebaClient().device(), stored.deviceId);
+    assert.equal(writes.length, 0);
+  } finally {
+    globalThis.chrome = originalChrome;
+  }
+});
+
 test('send diagnostics retain numeric business status without credentials or server text', () => {
   const secret = 'private-message-and-token';
   const response = { meta: { errorCode: 0, errorText: secret }, lcm: { kind: 'json', data: {
@@ -437,7 +507,8 @@ test('diagnostic export is read-only, account-bound and distinguishes history fr
   const roomState = { ...state, sentKeys: { [own]: 'private-reply-key', '999': 'another-private-key' } };
   client.roomState = async () => ({ state: roomState, account });
   client.blcpAccount = account.token;
-  client.blcp = { status: 1, user: { role: 7 }, joinedRooms: new Set(['123']),
+  client.device = async () => 'test-device';
+  client.blcp = { status: 1, user: { role: 7, bdUid: 789 }, cuidGalaxy2: 'test-device', joinedRooms: new Set(['123']),
     diagnostics: [summarizeReply(3, 185, { meta: {}, lcm: { kind: 'json', data: { msgid: own } } })] };
   client.im = async () => ({ messages: [raw(own, { type: '0', content_body: '{"text":"private-chat"}' })] });
   await client.messages('123', '789');
@@ -445,6 +516,7 @@ test('diagnostic export is read-only, account-bound and distinguishes history fr
   client.im = async () => { throw new Error('must not request a new history read'); };
   const report = await client.sendDiagnostics('123', '789');
   assert.equal(report.connection.joined, true);
+  assert.equal(report.identityChecks.imAccountMatchesWeb, true);
   assert.equal(report.lastHistoryRead.count, 1);
   assert.deepEqual(report.deliveryChecks, [
     { msgid: '999', seenInCache: false, seenInLastHistoryRead: false },
@@ -462,6 +534,7 @@ test('diagnostic export is read-only, account-bound and distinguishes history fr
   globalThis.chrome = { storage: { session: { clear: async () => {} }, local: { remove: async () => {} } } };
   await client.invalidateAccount();
   assert.equal(client.messageReads.size, 0);
+  assert.equal(client.lastHttpSend, null);
   assert.equal(client.blcp, null);
 });
 
@@ -521,20 +594,24 @@ test('image send uploads once, preserves original bytes, and sends mobile image 
   client.app = async () => ({ user_level: 12 });
   let packet;
   const blcp = { joinedRooms: new Set(['123']), user: { uk: 888, triggerId: 9 }, cuidGalaxy2: 'device',
-    sendMethod185: async (body) => { packet = body; return '999'; } };
+    sendMethod185: async () => { throw new Error('must not send the image over BLCP'); } };
   client.getBlcp = async () => blcp;
   globalThis.chrome = { storage: { session: { get: async () => ({ 'room:123': state }), set: async () => {} } } };
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options });
+    if (url.endsWith('/send_mcast_msg/liveshowuser')) {
+      packet = Object.fromEntries(options.body);
+      return new Response('{"err_code":0,"response_params":{"msgid":"999"}}');
+    }
     return calls.length === 1 ? new Response(JSON.stringify({ response_params: {
       put_url: 'https://bucket.bj.bcebos.com/picture', get_url: 'https://tieba-im-middleend.cdn.bcebos.com/picture.png',
       authorization: 'upload-token', date: 'today' } })) : new Response('', { status: 200 });
   };
   try {
     await client.send('123', '', '789', '', null, { data: png, width: 400, height: 200 });
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
     assert.equal(calls[1].options.method, 'PUT');
     assert.equal(calls[1].options.credentials, 'omit');
     assert.deepEqual(Buffer.from(calls[1].options.body), Buffer.from(png, 'base64'));
@@ -578,7 +655,7 @@ test('background accepts only its own panel and serializes writes per message', 
     const sender = { id: 'test-id', url: 'chrome-extension://test-id/panel.html' };
     const info = await new Promise((resolve) => listener({ type: 'runtime-info' }, sender, resolve));
     assert.equal(info.ok, true);
-    assert.equal(info.data.build, '0.2.7-local');
+    assert.equal(info.data.build, '0.2.10-local');
     assert.ok(['send-image', 'send-sticker', 'favorite-stickers', 'react', 'recall', 'send-diagnostics'].every((operation) => info.data.operations.includes(operation)));
     assert.equal(listener(request, { id: 'test-id', url: 'https://tieba.baidu.com/' }, () => {}), false);
     assert.equal(listener(request, { id: 'other-extension', url: sender.url }, () => {}), false);

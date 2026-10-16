@@ -45,7 +45,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
       ];
       const listeners = [];
       window.calls = [];
-      window.runtimeBuild = '0.2.7-local';
+      window.runtimeBuild = '0.2.10-local';
       window.identityRole = 0;
       window.reloads = 0;
       window.failNext = '';
@@ -137,7 +137,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
     const diagnosticFile = path.join(output, download.suggestedFilename());
     await download.saveAs(diagnosticFile);
     const diagnostics = JSON.parse(await fs.readFile(diagnosticFile, 'utf8'));
-    assert.equal(diagnostics.build, '0.2.7-local');
+    assert.equal(diagnostics.build, '0.2.10-local');
     assert.equal(diagnostics.replies[0].body.values.auto_risk_control_status, 2);
     assert.equal(await page.locator('#text').inputValue(), '诊断下载不应发送这条草稿');
     assert.equal(await page.evaluate(() => calls.filter(call => call.type.startsWith('send') && call.type !== 'send-diagnostics').length), writesBeforeDiagnostics);
@@ -358,7 +358,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
       await page.locator('#send').click();
       await page.waitForFunction(() => !document.querySelector('#text').value);
     };
-    const unconfirmed = page.locator('#notice').filter({ hasText: '服务器已受理，但暂未在频道中确认' });
+    const unconfirmed = page.locator('#notice').filter({ hasText: '收到发送回执，但未确认消息送达' });
     await reloadForDelivery();
     await page.clock.fastForward(9000);
     assert.equal(await page.locator('#notice').isVisible(), false, 'slow delivery must not be treated as failure at eight seconds');

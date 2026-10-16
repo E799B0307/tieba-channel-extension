@@ -2,6 +2,7 @@ import { md5, signed, parseJSON, positiveId, parseMessage, parseReactions, parse
 import { isCatalogReaction } from "./reactions.js";
 import { BLCPClient, CHAT_SDK_VERSION as BLCP_SDK_VERSION, CHAT_VERSION as BLCP_CHAT_VERSION } from "./blcp.js";
 import { cuidGalaxy2, c3Aid } from "./crypto.js";
+import { summarizeReply } from "./send-diagnostics.js";
 
 const APP_VERSION = "22.12.1.0";
 const SDK_VERSION = 11220030;
@@ -48,6 +49,7 @@ export class TiebaClient {
     this.reactionGeneration = 0;
     this.historyCache = new Map();
     this.messageReads = new Map();
+    this.lastHttpSend = null;
     this.stickerCache = null;
     this.blcp = null;          // BLCPClient 单例（懒连接）
     this.blcpAccount = null;   // BLCP 已登录对应的 token
@@ -62,6 +64,7 @@ export class TiebaClient {
     this.reactionGeneration += 1;
     this.historyCache.clear();
     this.messageReads.clear();
+    this.lastHttpSend = null;
     this.stickerCache = null;
     // 账号变化时断开 BLCP，下次按新账号重连
     if (this.blcp) { try { this.blcp.close(); } catch {} this.blcp = null; }
@@ -417,7 +420,12 @@ export class TiebaClient {
     const read = this.messageReads.get(`${account.id}:${state.room}`);
     return {
       generatedAt: Date.now(),
+      sendTransport: "https-imsapi",
       versions: { httpApp: APP_VERSION, httpSdk: SDK_VERSION, imApp: BLCP_CHAT_VERSION, imSdk: BLCP_SDK_VERSION },
+      identityChecks: {
+        imAccountMatchesWeb: client ? String(client.user.bdUid) === account.id : null,
+      },
+      httpSendReply: this.lastHttpSend?.accountId === account.id ? structuredClone(this.lastHttpSend.reply) : null,
       connection: { status: client?.status ?? -1, role: client?.user.role ?? null, joined: !!client?.joinedRooms?.has(state.room) },
       replies: structuredClone(client?.diagnostics || []),
       lastHistoryRead: read ? { at: read.at, count: read.ids.size } : null,
@@ -682,16 +690,9 @@ export class TiebaClient {
     const portrait = account.portrait ? `${account.portrait}?t=${Math.floor(Date.now() / 1000)}` : "";
     await this.verifyAccount(account, expectedId);
 
-    // 真实客户端协议：BLCP WebSocket service3/method185（REST 端点已被服务端静默丢弃）
-    const blcp = await this.getBlcp(account);
-    // 发送前置：必须已 join 房间（SW 休眠重启后 joinedRooms 丢失会在这里补 join）
-    if (!blcp.joinedRooms) blcp.joinedRooms = new Set();
-    if (!blcp.joinedRooms.has(state.room)) {
-      await blcp.joinChatRoom(Number(state.room));
-      blcp.joinedRooms.add(state.room);
-    }
     const body = picture?.url ? { url: picture.url, thumbnail: picture.thumbnail }
-      : picture ? await this.uploadImage(account, blcp, picture, expectedId) : { text: text.trim() };
+      : picture ? await this.uploadImage(account, await this.getBlcp(account), picture, expectedId) : { text: text.trim() };
+    const deviceId = await this.device();
     const content = JSON.stringify({ text: JSON.stringify({
       room_id: state.room, type: "0", to_uid: "0", vip: String(Number(account.vip)), name: account.name,
       portrait, content_type: picture ? "1" : "0", content_body: JSON.stringify(body),
@@ -700,47 +701,19 @@ export class TiebaClient {
       ext: JSON.stringify(messageMetadata(account, state, Number(levelData.user_level), portrait, picture?.metadata, picture ? 2 : 1)),
     }) });
     await this.verifyAccount(account, expectedId);
-    // origin_id 用 BLCP 登录响应里的 trigger_id（aiotieba 语义：self._user.trigger_id 由
-    // BLCP login 填充）；HTTP 登录的 trigger_id 与其可能不同
-    const originId = Number(blcp.user.triggerId) > 0 ? blcp.user.triggerId : Number(account.originId);
-    const requestData = {
-      method: 185,
-      mcast_id: Number(state.room),    // 必须是数字——字符串会报 "mcast_id error"(err_code=5)
-      role: blcp.user.role ?? 3,
-      token: account.token,            // BDUSS
-      appid: APP_ID,
-      uk: blcp.user.uk,
-      origin_id: originId,     // trigger_id
-      type: 81,
-      app_safe_ext: JSON.stringify({ haotianjing: { zid: "" } }),
-      content,
-      msg_key: key,
-      account_type: 1,
-      sdk_version: BLCP_SDK_VERSION,
-      event_list: [
-        { event: "CClickSendBegin", timestamp_ms: 0 },
-        { event: "CSendBegin", timestamp_ms: 0 },
-        { event: "CIMSendBegin", timestamp_ms: Math.floor(Date.now()) },
-      ],
-    };
-    const messageId = await blcp.sendMethod185(requestData).catch((error) => {
-      // 发送失败：把关键参数打到 console，方便与 aiotieba 对比定位 err_code=5
-      console.error("[tieba] 发送失败详情:", error.message);
-      console.error("[tieba] 发送参数:", JSON.stringify({
-        uk: blcp.user.uk,
-        origin_id: originId,
-        msg_key: key,
-        authorId: state.authorId,
-        triggerId_blcp: blcp.user.triggerId,
-        triggerId_http: account.originId,
-        bdUid: blcp.user.bdUid,
-        mcast_id: state.room,
-        sdk_version: BLCP_SDK_VERSION,
-      }));
-      throw error;
-    });
+    // Restore the original 0.1.x send path; a BLCP receipt alone did not reach channel members.
+    const data = await request("https://pim.baidu.com/imsapi/1.0/send_mcast_msg/liveshowuser", {
+      method: "POST",
+      body: new URLSearchParams(signed({ appid: APP_ID, app_version: APP_VERSION, sdk_version: SDK_VERSION,
+        timestamp: Math.floor(Date.now() / 1000), cuid: deviceId, device_type: "iOS",
+        mcast_id: state.room, msg_type: 81, msg_key: key, content })),
+    }, "发送消息");
     await this.verifyAccount(account, expectedId);
-    if (!messageId || String(messageId) === "0") throw new Error("贴吧未确认发送成功，请刷新消息列表后再决定是否重试");
+    this.lastHttpSend = { accountId: account.id, reply: summarizeReply(null, null, { lcm: { kind: "json", data } }) };
+    const messageId = data.response_params?.msgid;
+    if (typeof messageId === "number" && !Number.isSafeInteger(messageId) || !/^[1-9]\d{0,19}$/.test(String(messageId ?? ""))) {
+      throw new Error("发送结果未确认，请先查看频道，避免重复发送");
+    }
     const current = (await chrome.storage.session.get(`room:${state.room}`))[`room:${state.room}`];
     await this.verifyAccount(account, expectedId);
     if (current?.accountId === account.id) {

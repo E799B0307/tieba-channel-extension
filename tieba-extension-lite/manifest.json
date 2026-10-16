@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "贴吧频道聊天室（精简版）",
-  "version": "0.2.7",
-  "version_name": "0.2.7-local",
+  "version": "0.2.10",
+  "version_name": "0.2.10-local",
   "minimum_chrome_version": "116",
-  "description": "在贴吧网页打开侧边栏，使用当前登录账号查看吧频道和发送文字消息（BLCP 真实协议）。无机器人功能。",
+  "description": "在贴吧网页打开侧边栏，使用当前登录账号查看频道，通过 HTTPS 发送文字、图片和收藏表情。支持贴表情及管理撤回。",
   "permissions": ["sidePanel", "storage", "cookies"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_title": "打开贴吧频道聊天室" },

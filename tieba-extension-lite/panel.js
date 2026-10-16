@@ -881,7 +881,7 @@ function watchConfirmation(identifier, currentVersion) {
       return;
     }
     confirmations.delete(identifier);
-    showError(new Error("服务器已受理，但暂未在频道中确认这条消息。请先核对频道消息，避免重复发送"));
+    showError(new Error("收到发送回执，但未确认消息送达。请下载发送诊断，避免重复发送"));
   };
   clearTimeout(confirmations.get(identifier));
   confirmations.set(identifier, setTimeout(check, 30000));
