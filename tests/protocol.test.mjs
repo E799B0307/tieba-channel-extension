@@ -645,7 +645,9 @@ test('background accepts only its own panel and serializes writes per message', 
   const storage = { setAccessLevel: async () => {} };
   globalThis.chrome = {
     runtime: { id: 'test-id', getURL: (file) => `chrome-extension://test-id/${file}`,
-      sendMessage: async () => {}, onMessage: { addListener: (fn) => { listener = fn; } } },
+      sendMessage: async () => {}, onMessage: { addListener: (fn) => { listener = fn; } },
+      onStartup: { addListener: () => {} }, onInstalled: { addListener: () => {} } },
+    alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
     storage: { local: storage, session: storage },
     sidePanel: { setPanelBehavior: () => {} }, cookies: { onChanged: { addListener: () => {} } },
   };
@@ -655,10 +657,12 @@ test('background accepts only its own panel and serializes writes per message', 
     const sender = { id: 'test-id', url: 'chrome-extension://test-id/panel.html' };
     const info = await new Promise((resolve) => listener({ type: 'runtime-info' }, sender, resolve));
     assert.equal(info.ok, true);
-    assert.equal(info.data.build, '0.2.10-local');
+    assert.equal(info.data.build, '0.2.11-local');
     assert.ok(['send-image', 'send-sticker', 'favorite-stickers', 'react', 'recall', 'send-diagnostics'].every((operation) => info.data.operations.includes(operation)));
     assert.equal(listener(request, { id: 'test-id', url: 'https://tieba.baidu.com/' }, () => {}), false);
     assert.equal(listener(request, { id: 'other-extension', url: sender.url }, () => {}), false);
+    assert.equal(listener(request, { id: 'test-id', url: 'chrome-extension://test-id/settings.html' }, () => {}), false);
+    assert.equal(listener({ type: 'bot-save', settings: { enabled: true } }, { id: 'test-id', url: 'https://tieba.baidu.com/' }, () => {}), false);
     const first = new Promise((resolve) => listener(request, sender, resolve));
     await new Promise((resolve) => setImmediate(resolve));
     const duplicate = await new Promise((resolve) => listener(request, sender, resolve));

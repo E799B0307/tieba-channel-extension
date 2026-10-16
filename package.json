@@ -1,11 +1,11 @@
 {
   "name": "tieba-channel-extension",
-  "version": "0.2.10-local",
+  "version": "0.2.11-local",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "test": "node --test tests/protocol.test.mjs",
+    "test": "node --test tests/protocol.test.mjs tests/bot.test.mjs",
     "test:ui": "node tests/panel.test.cjs"
   },
   "devDependencies": {

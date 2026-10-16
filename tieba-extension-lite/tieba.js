@@ -16,7 +16,7 @@ async function request(url, options = {}, operation = "连接贴吧") {
   let response;
   let body;
   try {
-    response = await fetch(url, { ...options, credentials: "include", cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(15000) });
+    response = await fetch(url, { ...options, credentials: options.credentials ?? "include", cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(15000) });
     body = await response.text();
   } catch (error) {
     const timedOut = error.name === "TimeoutError" || error.name === "AbortError";
@@ -202,9 +202,9 @@ export class TiebaClient {
     return this.deviceTask;
   }
 
-  async app(path, fields, operation) {
+  async app(path, fields, operation, credentials = "include") {
     return request(`https://tiebac.baidu.com${path}`, {
-      method: "POST", body: new URLSearchParams(signed(fields, "tiebaclient!!!")),
+      method: "POST", body: new URLSearchParams(signed(fields, "tiebaclient!!!")), credentials,
     }, operation);
   }
 
@@ -277,11 +277,11 @@ export class TiebaClient {
   async loginWithToken(token) {
     if (!token || typeof token !== "string") throw accountError("机器人账号 BDUSS 为空");
     const generation = this.accountGeneration;
-    const data = await this.app("/c/s/login", { bdusstoken: token, _client_version: APP_VERSION }, "验证机器人账号");
+    const data = await this.app("/c/s/login", { bdusstoken: token, _client_version: APP_VERSION }, "验证机器人账号", "omit");
     if (!data.user?.id) throw accountError("机器人账号 BDUSS 已失效，请重新填写");
     const profile = await this.app("/c/u/user/profile", {
       BDUSS: token, _client_version: APP_VERSION, _client_type: 2, uid: String(data.user.id), need_post_count: 1, pn: 1,
-    }, "读取机器人账号资料");
+    }, "读取机器人账号资料", "omit");
     const user = profile.user;
     if (!user?.id || String(user.id) !== String(data.user.id)) throw accountError("机器人账号资料与登录身份不一致");
     const growthLevel = user.user_growth?.level_id;
@@ -290,6 +290,7 @@ export class TiebaClient {
       id: String(user.id),
       name: String(user.name_show || user.name || data.user.name || "贴吧用户"),
       originId: data.user.trigger_id,
+      tbs: String(data.anti?.tbs || ""),
       portrait: String(user.portrait || data.user.portrait || "").split("?")[0],
       vip: Number(user.is_mem) > 0,
       growthLevel: growthLevel != null && /^\d{1,3}$/.test(String(growthLevel)) ? Number(growthLevel) : null,
@@ -311,7 +312,7 @@ export class TiebaClient {
       id: positiveId(room.room_id), name: String(room.room_info?.name || room.room_id),
     }));
     const rooms = [...new Map(listed.map((room) => [room.id, room])).values()];
-    await chrome.storage.session.set({ [`forum:${fid}`]: { accountId: account.id, rooms } });
+    await chrome.storage.session.set({ [`forum:${fid}`]: { accountId: account.id, name: String(resolved.forum.name || name), rooms } });
     await chrome.storage.local.set({ lastForum: { accountId: account.id, name } });
     await this.verifyAccount(account, expectedId);
     return { fid, name, rooms };
@@ -438,6 +439,12 @@ export class TiebaClient {
   async messages(roomId, expectedId, after = "0") {
     if (typeof after !== "string" || !/^\d{1,20}$/.test(after)) throw new Error("消息游标无效，请重新选择频道");
     const { state, account } = await this.roomState(roomId, expectedId);
+    return this.readMessages(state, account, after);
+  }
+
+  async readMessages(state, account, after = "0") {
+    const expectedId = account.id;
+    await this.verifyAccount(account, expectedId);
     const history = this.history(state, account);
     const data = await this.im("fetch_mcast_msg_client", {
       mcast_id: Number(state.room), msgid_begin: 0, msgid_end: "9223372036854775807", count: history.size ? -40 : -80,
@@ -795,6 +802,39 @@ export class TiebaClient {
     });
     if (!messageId || String(messageId) === "0") throw new Error("贴吧未确认发送成功");
     return { id: String(messageId), room };
+  }
+
+  async recallAsBot(botAccount, state, message, beforeWithdraw) {
+    const room = positiveId(state.room);
+    const fid = positiveId(state.fid);
+    if (!botAccount?.token || !/^[0-9a-f]{16,64}$/i.test(botAccount.tbs || "")) {
+      throw accountError("机器人登录校验已失效");
+    }
+    if (message?.room !== room || !/^[1-9]\d{0,19}$/.test(message.id || "")
+      || typeof message.key !== "string" || !message.key || message.key.length > 512
+      || message.system || message.hidden || message.removed || message.recalled || message.deleted?.length) {
+      throw new Error("自动撤回目标无效");
+    }
+    const authorId = await userIdFromAuthorId(message.authorId);
+    if (authorId === botAccount.id) throw new Error("不自动撤回机器人自己的消息");
+    const result = await this.app("/c/f/chat/getChatRoomDetail", {
+      BDUSS: botAccount.token, _client_version: APP_VERSION, chatroom_id: room, last_msg_id: "0", last_time: "0",
+    }, "读取机器人频道权限", "omit");
+    const detail = result.data;
+    const role = detail?.user_info?.identity_role;
+    if (String(detail?.basic_info?.id) !== room || String(detail?.basic_info?.forum_id) !== fid
+      || !/^[1-3]$/.test(String(role))
+      || !canRecallMessage({ authorId: "", identityRole: Number(role) }, message)) {
+      throw Object.assign(new Error("机器人没有撤回该消息的频道管理权限"), { code: "RECALL_FORBIDDEN" });
+    }
+    // Re-check the switch and account after permission lookup, immediately before the write.
+    await beforeWithdraw();
+    await this.app("/c/c/chatroom/withdrawMsg", {
+      BDUSS: botAccount.token, _client_version: APP_VERSION, tbs: botAccount.tbs,
+      msg_type: message.msgType || "0", uid_to: authorId, chatroom_id: room,
+      msg_id: message.id, msg_key: message.key, forum_id: fid,
+    }, "机器人撤回消息", "omit");
+    return { room, id: message.id };
   }
 
   async recall(roomId, expectedId, id) {

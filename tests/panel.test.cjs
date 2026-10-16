@@ -45,7 +45,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
       ];
       const listeners = [];
       window.calls = [];
-      window.runtimeBuild = '0.2.10-local';
+      window.runtimeBuild = '0.2.11-local';
       window.identityRole = 0;
       window.reloads = 0;
       window.failNext = '';
@@ -57,12 +57,16 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
       window.sendId = own;
       window.delayedMessage = '';
       window.failMessageReads = false;
+      window.botData = { settings: { enabled: false, ownerId: '789', recallWords: ['广告测试词'],
+        rooms: [{ roomId: '123', fid: '456', name: '嘉心糖的手账本' }] }, hasToken: true, status: '等待检测',
+        records: [{ at: 1792158655000, room: '123', name: '嘉心糖的手账本', id: other, words: ['广告测试词'], status: 'accepted' }] };
       let generation = 0;
       window.push = (messages) => listeners.forEach((fn) => fn({ type: 'blcp-push', messages }, { id: 'test-extension', url: 'http://extension.test/background.js' }));
       window.chrome = { runtime: {
         id: 'test-extension', getURL: (name) => 'http://extension.test/' + name,
         onMessage: { addListener: (fn) => listeners.push(fn) },
         reload: () => { window.reloads++; },
+        openOptionsPage: async () => { window.optionsOpened = true; },
         sendMessage: async (request) => {
           window.calls.push(request);
           if (window.failNext === request.type) { window.failNext = ''; return { ok: false, error: '模拟请求失败' }; }
@@ -70,7 +74,17 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
           switch (request.type) {
             case 'runtime-info':
               if (!window.runtimeBuild) return { ok: false, error: '不支持的操作' };
-              data = { build: window.runtimeBuild, operations: ['send', 'send-image', 'send-sticker', 'favorite-stickers', 'react', 'reaction-detail', 'recall', 'send-diagnostics'] }; break;
+              data = { build: window.runtimeBuild, operations: ['send', 'send-image', 'send-sticker', 'favorite-stickers', 'react', 'reaction-detail', 'recall', 'send-diagnostics', 'bot-add-room'] }; break;
+            case 'bot-add-room': data = {}; break;
+            case 'bot-settings': data = window.botData; break;
+            case 'bot-save':
+              window.botData.settings.enabled = request.settings.enabled;
+              window.botData.settings.recallWords = request.settings.recallWords;
+              if (request.settings.botBduss !== undefined) window.botData.hasToken = !!request.settings.botBduss;
+              data = window.botData; break;
+            case 'bot-remove-room':
+              window.botData.settings.rooms = window.botData.settings.rooms.filter(room => room.roomId !== request.room);
+              data = window.botData; break;
             case 'send-diagnostics': data = { replies: [{ methodId: 185, body: { values: { auto_risk_control_status: 2 } } }] }; break;
             case 'initialize': data = { account: { id: '789', name: '自己' }, context: { name: '嘉然' }, lastForum: '' }; break;
             case 'rooms': data = { fid: '456', name: '嘉然', rooms: [{ id: '123', name: '嘉心糖的手账本' }, { id: '124', name: '另一个频道' }] }; break;
@@ -109,7 +123,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
               data = { room: request.room, id: window.sendId }; break;
             default: return { ok: false, error: 'unexpected API: ' + request.type };
           }
-          return { ok: true, data: structuredClone(data) };
+          return { ok: true, build: window.runtimeBuild, data: structuredClone(data) };
         },
       } };
     });
@@ -119,6 +133,9 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
     const own = page.locator('[data-message-id="9007199254740993123"]');
     const other = page.locator('[data-message-id="9007199254740993124"]');
     await other.waitFor();
+    await page.getByRole('button', { name: '添加到嘉然吧自动撤回' }).click();
+    assert.equal(await page.evaluate(() => calls.find(call => call.type === 'bot-add-room').room), '123');
+    assert.equal(await page.evaluate(() => window.optionsOpened), true);
     assert.equal(await page.locator('.message').count(), 2, 'history system packet must stay hidden');
     assert.equal(await other.getByRole('button', { name: '撤回自己发送的消息' }).count(), 0, 'cannot recall others');
     assert.equal(await own.getByRole('button', { name: '撤回自己发送的消息' }).count(), 1);
@@ -137,7 +154,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
     const diagnosticFile = path.join(output, download.suggestedFilename());
     await download.saveAs(diagnosticFile);
     const diagnostics = JSON.parse(await fs.readFile(diagnosticFile, 'utf8'));
-    assert.equal(diagnostics.build, '0.2.10-local');
+    assert.equal(diagnostics.build, '0.2.11-local');
     assert.equal(diagnostics.replies[0].body.values.auto_risk_control_status, 2);
     assert.equal(await page.locator('#text').inputValue(), '诊断下载不应发送这条草稿');
     assert.equal(await page.evaluate(() => calls.filter(call => call.type.startsWith('send') && call.type !== 'send-diagnostics').length), writesBeforeDiagnostics);
@@ -397,5 +414,43 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
     assert.equal(await unconfirmed.isVisible(), false, 'old-room delivery timers must be cancelled');
     assert.deepEqual(errors, []);
     console.log('PASS delayed delivery, overlapping cursors, read recovery, uncertain receipts, no resend, and room isolation');
+
+    await page.goto('http://extension.test/settings.html');
+    await page.getByText('请求受理，等待确认', { exact: true }).waitFor();
+    assert.equal(await page.locator('#enabled').isChecked(), false);
+    assert.equal(await page.locator('#token').inputValue(), '', 'saved credentials must not be returned to the page');
+    await page.locator('#words').fill('新的广告词\n第二个关键词');
+    await page.locator('#enabled').check();
+    await page.locator('#save').click();
+    await page.getByText('设置已保存', { exact: true }).waitFor();
+    assert.deepEqual(await page.evaluate(() => calls.filter(call => call.type === 'bot-save').at(-1).settings),
+      { enabled: true, recallWords: ['新的广告词', '第二个关键词'] });
+    await page.locator('#words').fill('未保存的词');
+    await page.locator('#refresh').click();
+    assert.equal(await page.locator('#words').inputValue(), '未保存的词', 'refresh must retain the draft');
+    await page.locator('#stop').click();
+    await page.getByText('自动撤回已停用', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => calls.filter(call => call.type === 'bot-save').at(-1).settings.enabled), false);
+    await page.locator('#token').fill('fixture-replacement-token');
+    await page.locator('#save').click();
+    await page.waitForFunction(() => !document.querySelector('#token').value);
+    assert.equal(await page.evaluate(() => calls.filter(call => call.type === 'bot-save').at(-1).settings.botBduss), 'fixture-replacement-token');
+    await page.locator('#clear-token').check();
+    await page.locator('#save').click();
+    await page.waitForFunction(() => document.querySelector('#token').placeholder === '尚未配置');
+    assert.equal(await page.evaluate(() => calls.filter(call => call.type === 'bot-save').at(-1).settings.botBduss), '');
+    await page.evaluate(() => { window.failNext = 'bot-save'; });
+    await page.locator('#save').click();
+    await page.getByText('模拟请求失败', { exact: true }).waitFor();
+    for (const width of [280, 800]) {
+      await page.setViewportSize({ width, height: 1000 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      assert.equal(await page.locator('img').evaluateAll(images => images.every(img => img.complete && img.naturalWidth > 0)), true);
+      await page.screenshot({ path: path.join(output, `bot-settings-${width}.png`), fullPage: true });
+    }
+    await page.getByRole('button', { name: '移除 嘉心糖的手账本' }).click();
+    await page.getByText('尚未添加频道', { exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+    console.log('PASS bot settings: registration, credential masking/replacement/removal, immediate stop, draft retention, logs, errors and responsive layout');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

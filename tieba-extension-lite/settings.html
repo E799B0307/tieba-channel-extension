@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>嘉然吧自动撤回 · 贴吧频道</title>
+  <link rel="stylesheet" href="settings.css">
+  <script type="module" src="settings.js"></script>
+</head>
+<body>
+  <main>
+    <header><div><h1>嘉然吧自动撤回</h1><p id="status" role="status">正在加载</p></div><button id="stop" class="danger" type="button" disabled>立即停用</button></header>
+    <p id="notice" role="alert" hidden></p>
+    <form id="settings-form">
+      <section aria-labelledby="account-heading">
+        <h2 id="account-heading">机器人账号</h2>
+        <label class="check"><input id="enabled" type="checkbox">自动撤回</label>
+        <label for="token">独立机器人 BDUSS</label>
+        <input id="token" type="password" maxlength="2048" autocomplete="off" spellcheck="false">
+        <label class="check secondary"><input id="clear-token" type="checkbox">清除已保存凭据</label>
+      </section>
+      <section aria-labelledby="words-heading">
+        <h2 id="words-heading">撤回关键词</h2>
+        <label for="words">正文包含匹配，不区分英文字母大小写</label>
+        <textarea id="words" rows="7" placeholder="每行一个关键词" maxlength="20200"></textarea>
+        <div class="actions"><span id="saved-state" role="status"></span><button id="save" type="submit" disabled>保存设置</button></div>
+      </section>
+    </form>
+    <section aria-labelledby="rooms-heading">
+      <h2 id="rooms-heading">嘉然吧频道</h2>
+      <ul id="rooms"></ul><p id="rooms-empty" class="secondary">尚未添加频道</p>
+    </section>
+    <section aria-labelledby="log-heading">
+      <div class="section-heading"><h2 id="log-heading">处理记录</h2><button id="refresh" class="icon-button" type="button" title="刷新处理记录" aria-label="刷新处理记录"><img src="icons/refresh-cw.svg" alt=""></button></div>
+      <div class="table-scroll"><table><thead><tr><th>时间 / 频道</th><th>消息 / 命中词</th><th>处理状态</th></tr></thead><tbody id="records"></tbody></table></div>
+      <p id="records-empty" class="secondary">暂无处理记录</p>
+    </section>
+    <footer><span id="version"></span><a href="privacy.html" target="_blank" rel="noopener">隐私说明</a></footer>
+  </main>
+</body>
+</html>

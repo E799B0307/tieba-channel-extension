@@ -83,6 +83,7 @@ function controls() {
   elements["sticker-upload"].disabled = elements["image-toggle"].disabled;
   elements["image-cancel"].disabled = sending;
   elements["send-diagnostics"].disabled = !room || busy || sending || !runtimeReady;
+  elements["bot-add-room"].disabled = !room || busy || sending || !runtimeReady || forum?.name !== "嘉然";
   if (elements.text.disabled) { toggleEmoji(false); toggleAt(false); toggleStickers(false); }
   elements.send.disabled = !room || busy || sending || imageReading || !runtimeReady || (!pendingImage && !elements.text.value.trim());
   elements.send.textContent = sending ? "发送中…" : "发送";
@@ -937,6 +938,16 @@ elements.rooms.addEventListener("change", () => {
   else resetRoom();
 });
 elements.reconnect.addEventListener("click", initialize);
+elements["bot-settings"].addEventListener("click", () => chrome.runtime.openOptionsPage().catch(showError));
+elements["bot-add-room"].addEventListener("click", async () => {
+  if (!room) return;
+  elements["bot-add-room"].disabled = true;
+  try {
+    await api("bot-add-room", { room: room.room });
+    await chrome.runtime.openOptionsPage();
+  } catch (error) { showError(error); }
+  finally { controls(); }
+});
 elements["send-diagnostics"].addEventListener("click", async () => {
   const currentVersion = version;
   try {
